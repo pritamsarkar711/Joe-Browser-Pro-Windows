@@ -7,7 +7,6 @@ Unlimited isolated profiles, a per-profile proxy, a coherent fingerprint for eve
 and pinned browser builds. Nothing leaves your PC.
 
 **[Download JoeBrowserSetup.exe](../../releases/latest/download/JoeBrowserSetup.exe)**
-· **[Portable JoeBrowser.exe](../../releases/latest/download/JoeBrowser.exe)**
 · [All releases](../../releases)
 
 Windows 10 or 11, 64-bit. **Choose JoeBrowserSetup.exe for installation.** The setup wizard
@@ -16,7 +15,9 @@ create shortcuts, and optionally launch the app when finished. All-users install
 Windows administrator permission (UAC); a just-for-me installation normally needs no elevation.
 The application itself runs without administrator rights.
 
-`JoeBrowser.exe` is the **portable alternative**, not an installer: it intentionally opens directly.
+Windows releases are installer-only. If an older download named `JoeBrowser.exe` opens the app
+directly, it is the legacy portable build. Download `JoeBrowserSetup.exe` above instead;
+existing portable downloads cannot be converted into installers by updating this repository.
 The app runs with or without a Joe Browser account - the free plan keeps one profile, and a 7-day
 trial or license key lifts the ceiling. An account is free to create and exists only for
 licensing; profile data itself stays on this PC.
@@ -84,7 +85,12 @@ The test suite asserts the three properties that matter: determinism, uniqueness
 1. Install with `JoeBrowserSetup.exe`.
 2. **New profile** — a name is all that is asked for; the identity is generated.
 3. Open **Edit → Proxy** and add the proxy. Test it; the clock and language follow its country.
-4. **Open profile.** The browser starts with that profile's own storage and identity.
+4. **Open profile.** On first launch, the app downloads an app-managed stable runtime (internet
+   access and disk space required). Subsequent launches reuse it with the profile's own storage.
+   Local browser installations are never substituted. Edge and Windows Firefox provisioning
+   are not yet supported. Joe currently uses Chrome for Testing, not a custom-patched engine.
+
+See [AUDIT.md](AUDIT.md) for confirmed fixes, security findings, and release-blocking gaps.
 
 ## Windows may show a warning the first time
 
@@ -102,7 +108,8 @@ npm run build
 npx electron-builder --win --x64
 ```
 
-The output is `release\JoeBrowserSetup.exe` and `release\JoeBrowser.exe`.
+The distributable output is `release\JoeBrowserSetup.exe`. Do not distribute the executable
+inside `release\win-unpacked`; it is the application payload, not the installer.
 
 `scripts\release.ps1` runs all of that with the verification the CI job does, and publishes when
 asked:

@@ -17,12 +17,11 @@ files:
 # with no tray, which is how the previous packaging lost it.
 asar: true
 
-# Windows: an NSIS installer plus a portable single EXE, both from one build.
+# Windows downloads must always open the assisted installation wizard.
+# Do not publish a portable executable alongside setup: it bypasses installation.
 win:
   target:
     - target: nsis
-      arch: [x64]
-    - target: portable
       arch: [x64]
   icon: build/icon.png
   artifactName: ${productName}-${version}-${arch}.${ext}
@@ -40,10 +39,6 @@ nsis:
   createStartMenuShortcut: true
   shortcutName: Joe Browser
   uninstallDisplayName: Joe Browser ${version}
-  # Exactly the two names the README links to, so the download URL never changes shape.
+  # Stable installer name used by the README and release workflow.
   artifactName: JoeBrowserSetup.${ext}
   deleteAppDataOnUninstall: false
-
-portable:
-  artifactName: JoeBrowser.${ext}
-  requestExecutionLevel: user

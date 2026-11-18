@@ -17,7 +17,7 @@ import { log } from './log';
 import { testProxy } from './proxy';
 import { ProxyWatchState } from './proxyWatch';
 import * as history from './history';
-import { resolveKernelExe, installedKernels, compareVersions } from './catalog';
+import { resolveManagedRuntime } from './runtime';
 import { buildIdentity } from './ua';
 
 /**
@@ -126,6 +126,7 @@ export class BrowserSession extends EventEmitter {
     Paths.ensure(this.dataDir, Paths.logs);
 
     const target = await this.exeFor(profile);
+    if (this.closing) throw new Error('Profile launch was cancelled.');
     const engine = target.engine;
     const isFirefox = engine === 'firefox';
 
@@ -213,6 +214,7 @@ export class BrowserSession extends EventEmitter {
       countryCode: profile.proxy.lastCountryCode,
     });
 
+    if (this.closing) throw new Error('Profile launch was cancelled.');
     const child = spawn(target.exe, args, {
       cwd: path.dirname(target.exe),
       detached: false,
@@ -222,13 +224,6 @@ export class BrowserSession extends EventEmitter {
     });
 
     this.child = child;
-    log.info(`launched ${profile.name} with ${path.basename(target.exe)} ${this.info.browserVersion}`);
-    this.info.pid = child.pid ?? 0;
-    this.info.engine = engine;
-    this.info.browserVersion = target.version || profile.browserVersion;
-    this.info.state = 'running';
-    this.emit('changed', this.info);
-
     child.once('exit', () => void this.teardown());
     child.once('error', (error) => {
       this.info.state = 'failed';
@@ -236,6 +231,16 @@ export class BrowserSession extends EventEmitter {
       this.emit('changed', this.info);
       void this.teardown();
     });
+    await new Promise<void>((resolve, reject) => {
+      child.once('spawn', resolve);
+      child.once('error', reject);
+    });
+    log.info(`launched ${profile.name} with ${path.basename(target.exe)} ${this.info.browserVersion}`);
+    this.info.pid = child.pid ?? 0;
+    this.info.engine = engine;
+    this.info.browserVersion = target.version || profile.browserVersion;
+    this.info.state = 'running';
+    this.emit('changed', this.info);
 
     this.startProxyWatch(profile);
 
@@ -259,7 +264,7 @@ export class BrowserSession extends EventEmitter {
     const args = [
       `--user-data-dir=${this.dataDir}`,
       `--remote-debugging-port=${this.debugPort}`,
-      '--remote-allow-origins=*',
+      '--remote-debugging-address=127.0.0.1',
       '--no-first-run',
       '--no-default-browser-check',
       '--disable-blink-features=AutomationControlled',
@@ -269,8 +274,6 @@ export class BrowserSession extends EventEmitter {
       '--disable-sync',
       '--metrics-recording-only',
       '--no-service-autorun',
-      '--password-store=basic',
-      '--use-mock-keychain',
       `--user-agent=${userAgent}`,
       `--lang=${fp.language}`,
       `--accept-lang=${fp.acceptLanguage}`,
@@ -629,8 +632,9 @@ export class BrowserSession extends EventEmitter {
           httpOnly: Boolean(cookie.httpOnly),
         };
         if (cookie.expires && cookie.expires > 0) params['expires'] = cookie.expires;
-        await this.cdp.send('Network.setCookie', params, page);
-        written++;
+        if (cookie.sameSite && ['Strict', 'Lax', 'None'].includes(cookie.sameSite)) params['sameSite'] = cookie.sameSite;
+        const result = await this.cdp.send<{ success: boolean }>('Network.setCookie', params, page);
+        if (result.success) written++;
       } catch {
         /* a cookie the browser refuses is skipped, not fatal for the rest */
       }
@@ -815,14 +819,15 @@ export class SessionManager {
       this.options.onToast?.(notice.message, notice.detail, true);
     });
     session.on('closed', (profileId: string) => {
-      this.sessions.delete(profileId);
+      if (this.sessions.get(profileId) === session) this.sessions.delete(profileId);
       this.events.emit('closed', profileId);
     });
 
     try {
       return await session.start(profile, startUrl);
     } catch (error) {
-      this.sessions.delete(profile.id);
+      await session.stop().catch(() => undefined);
+      if (this.sessions.get(profile.id) === session) this.sessions.delete(profile.id);
       throw error;
     }
   }
@@ -852,19 +857,7 @@ export class SessionManager {
   }
 }
 
-/** Resolve only app-managed builds; never silently substitute an installed system browser. */
+/** App-managed runtimes are provisioned on first launch; local browsers are never substituted. */
 async function resolveExecutable(profile: Profile): Promise<{ exe: string; engine: string; version: string; runtimeVersion?: string }> {
-  if (profile.kernelId) {
-    const build = installedKernels().find((item) => item.id === profile.kernelId && item.engine === profile.engine);
-    const exe = build && resolveKernelExe(build.id);
-    if (build && exe) return { exe, engine: build.engine, version: build.version, runtimeVersion: build.runtimeVersion };
-    throw new Error(`The selected ${profile.engine} build is not installed. Install it from the Browsers page.`);
-  }
-  const builds = installedKernels().filter((item) => item.engine === profile.engine)
-    .sort((a, b) => compareVersions(b.version, a.version));
-  for (const build of builds) {
-    const exe = resolveKernelExe(build.id);
-    if (exe) return { exe, engine: build.engine, version: build.version, runtimeVersion: build.runtimeVersion };
-  }
-  throw new Error(`No app-managed ${profile.engine} build is installed. Install one from the Browsers page.`);
+  return resolveManagedRuntime(profile);
 }

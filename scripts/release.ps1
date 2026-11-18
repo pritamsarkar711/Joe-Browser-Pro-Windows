@@ -1,14 +1,14 @@
 <#
 .SYNOPSIS
-    Builds JoeBrowserSetup.exe and JoeBrowser.exe, verifies them, and optionally publishes them.
+    Builds JoeBrowserSetup.exe, verifies it, and optionally publishes it.
 
 .DESCRIPTION
     This is the same sequence the CI workflow runs, for a machine that has Windows and a normal
     network connection. It exists because the packaging step needs the Electron Windows
     distribution, which only a Windows-capable environment can fetch.
 
-    Nothing here publishes unless you pass -Publish. Without it the script stops after the two
-    binaries exist in .\release and prints their sizes.
+    Nothing here publishes unless you pass -Publish. Without it the script stops after the
+    installer exists in .\release and prints their sizes.
 
 .EXAMPLE
     .\scripts\release.ps1
@@ -50,9 +50,8 @@ if ($LASTEXITCODE -ne 0) { throw 'Packaging failed' }
 
 Step 'Verifying the binaries'
 $setup = Join-Path $root 'release\JoeBrowserSetup.exe'
-$portable = Join-Path $root 'release\JoeBrowser.exe'
 
-foreach ($file in @($setup, $portable)) {
+foreach ($file in @($setup)) {
     if (-not (Test-Path $file)) { throw "Missing $file - the packaging step did not produce it" }
     $sizeMb = [math]::Round((Get-Item $file).Length / 1MB, 1)
     if ($sizeMb -lt 20) { throw "$file is only $sizeMb MB, which is too small to be a real build" }
@@ -79,8 +78,8 @@ Step "Publishing $Tag"
 git tag $Tag
 git push origin $Tag
 
-gh release create $Tag $setup $portable `
+gh release create $Tag $setup `
     --title "Joe Browser $version" `
-    --notes "Download JoeBrowserSetup.exe for the installer, or JoeBrowser.exe to run it without installing. Windows 10 or 11, 64-bit. The binaries are not code-signed, so SmartScreen may show 'Windows protected your PC' the first time - choose More info, then Run anyway."
+    --notes "Download JoeBrowserSetup.exe and follow the installation wizard to choose your installation folder and options. Windows 10 or 11, 64-bit. The binaries are not code-signed, so SmartScreen may show 'Windows protected your PC' the first time - choose More info, then Run anyway."
 
 Write-Host "`nPublished: https://github.com/$((gh repo view --json nameWithOwner -q .nameWithOwner))/releases/tag/$Tag" -ForegroundColor Green

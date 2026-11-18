@@ -340,6 +340,7 @@ export function updateProfile(id: string, patch: Partial<Profile>): Profile {
     // Identity and creation time are not editable through a patch.
     id: current.id,
     createdAt: current.createdAt,
+    kernelId: patch.engine && patch.engine !== current.engine && patch.kernelId === undefined ? '' : (patch.kernelId ?? current.kernelId),
     updatedAt: new Date().toISOString(),
     proxy,
     tools: { ...current.tools, ...(patch.tools ?? {}) },

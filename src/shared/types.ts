@@ -728,6 +728,7 @@ export interface MainEvents {
 
 /** The fingerprint checkers, opened inside the profile's own session. */
 export const CHECK_SITES = [
+  { name: 'BrowserLeaks', url: 'https://browserleaks.com/' },
   { name: 'iphey', url: 'https://iphey.com/' },
   { name: 'pixelscan', url: 'https://pixelscan.net/' },
   { name: 'browserscan', url: 'https://www.browserscan.net/' },

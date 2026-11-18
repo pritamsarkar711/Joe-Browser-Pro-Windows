@@ -509,7 +509,7 @@ export function profileExtensionFolders(
   masterEnabled: boolean,
   customEnabled: boolean,
 ): string[] {
-  if (!masterEnabled) return [];
+  if (!masterEnabled || profile.engine === 'firefox') return [];
 
   const shape = load();
   const removed = new Set(shape.removedShipped);

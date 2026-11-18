@@ -7,6 +7,7 @@ import { execFile } from 'node:child_process';
 import type { DetectedBrowser, InstalledKernel, KernelBuild } from '../../shared/types';
 import { Paths } from './paths';
 import { readJson, writeJson } from './atomic';
+import { requireSpace } from './disk';
 
 /**
  * The browser kernel catalog.
@@ -169,18 +170,19 @@ async function fetchChromiumBuilds(): Promise<KernelBuild[]> {
 }
 
 /**
- * Joe Browser builds use the same published, verifiable Chromium archives as the Chromium entry.
+ * Joe Browser uses the published Chrome for Testing archives as its Chromium runtime.
  * They are a separate engine entry because a Joe Browser profile gets its own window, branding and
  * built-in tools - the archive is only the real engine underneath. Keeping the vendor URL means a
- * Joe Browser download is signed and checksummed exactly like a Chromium one, with no mirror.
+ * download comes directly from the vendor, not an unverified third-party mirror.
+ * This is a managed wrapper, not a separately patched or independently signed browser engine.
  */
-function joeBuildsFromChromium(chromium: KernelBuild[]): KernelBuild[] {
+export function joeBuildsFromChromium(chromium: KernelBuild[]): KernelBuild[] {
   return chromium
-    .filter((build) => build.engine === 'chromium' && build.channel === 'stable')
+    .filter((build) => build.engine === 'chrome' && build.channel.toLowerCase() === 'stable')
     .slice(0, 4)
     .map((build) => ({
       ...build,
-      id: build.id.replace(/^chromium-/, 'joe-'),
+      id: build.id.replace(/^chrome-/, 'joe-'),
       engine: 'joe',
       channel: 'stable',
     }));
@@ -304,7 +306,7 @@ export function installedKernels(): InstalledKernel[] {
 
 export async function listKernels(forceRefresh = false): Promise<KernelBuild[]> {
   const cache = readJson<CacheShape>(CACHE_FILE(), { fetchedAt: 0, builds: [] });
-  const fresh = cache.schemaVersion === 3 && Date.now() - cache.fetchedAt < CACHE_TTL_MS;
+  const fresh = cache.schemaVersion === 4 && Date.now() - cache.fetchedAt < CACHE_TTL_MS;
 
   // Discard legacy entries with a fabricated archive URL, including old cached results.
   let builds = cache.builds.filter((build) =>
@@ -331,7 +333,7 @@ export async function listKernels(forceRefresh = false): Promise<KernelBuild[]> 
     const withoutJoe = builds.filter((build) => build.engine !== 'joe');
     builds = [...withoutJoe, ...joeBuildsFromChromium(withoutJoe)];
     if (gathered.length > 0) {
-      writeJson(CACHE_FILE(), { schemaVersion: 3, fetchedAt: Date.now(), builds } satisfies CacheShape);
+      writeJson(CACHE_FILE(), { schemaVersion: 4, fetchedAt: Date.now(), builds } satisfies CacheShape);
     } else if (builds.length === 0 && installed.size === 0) {
       throw new Error(
         'The browser catalog could not be reached. Check the connection and try again - ' +
@@ -368,7 +370,7 @@ export async function downloadKernel(
   const targetDir = kernelDirectory(build.id);
   if (fs.existsSync(targetDir)) {
     const existing = readJson<InstalledKernel | null>(path.join(targetDir, 'kernel.json'), null);
-    if (existing) return existing;
+    if (existing?.id === build.id && existing.engine === build.engine && resolveKernelExe(build.id)) return existing;
   }
 
   if (fs.existsSync(targetDir)) throw new Error('The browser build folder already exists but is invalid. Remove it before reinstalling.');
@@ -378,6 +380,7 @@ export async function downloadKernel(
   }
 
   Paths.ensure(Paths.kernels);
+  requireSpace((build.sizeBytes || 320 * 1024 * 1024) * 3, `install ${build.engine} ${build.version}`);
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'joe-kernel-'));
   const archivePath = path.join(tempDir, archiveNameFor(build));
 

@@ -273,8 +273,8 @@ test('the release workflow builds what it says it publishes', () => {
     );
   }
 
-  // Both artifact names the README links to have to be the ones uploaded.
-  for (const artifact of ['JoeBrowserSetup.exe', 'JoeBrowser.exe']) {
+  // The installer linked by the README must be uploaded.
+  for (const artifact of ['JoeBrowserSetup.exe']) {
     assert.ok(workflow.includes(artifact), `the workflow does not publish ${artifact}`);
   }
 
@@ -311,7 +311,7 @@ test('the staged workflow replacement is correct and drops the pinned tag', () =
   assert.match(staged, /target_commitish:/);
   assert.match(staged, /if:\s*\$\{\{ inputs\.publish == true \}\}/, 'publishing must require explicit opt-in');
 
-  for (const artifact of ['JoeBrowserSetup.exe', 'JoeBrowser.exe']) {
+  for (const artifact of ['JoeBrowserSetup.exe']) {
     assert.ok(staged.includes(artifact), `the staged workflow does not publish ${artifact}`);
   }
 
@@ -402,4 +402,25 @@ test('the built preload exposes every Bridge method on the actual joe object', (
   assert.equal(received, 'changed');
   off();
   assert.equal(subscriptions.size, 0);
+});
+
+
+test('Windows distribution is an assisted installer, never a portable app', () => {
+  const config = read('electron-builder.yml');
+  assert.match(config, /target: nsis/);
+  assert.doesNotMatch(config, /target: portable|^portable:/m);
+  for (const setting of [
+    'oneClick: false', 'perMachine: false', 'allowElevation: true',
+    'allowToChangeInstallationDirectory: true', 'license: LICENSE',
+    'createDesktopShortcut: true', 'createStartMenuShortcut: true',
+    'runAfterFinish: true', 'deleteAppDataOnUninstall: false',
+    'artifactName: JoeBrowserSetup.${ext}',
+  ]) assert.ok(config.includes(setting), `Missing installer setting: ${setting}`);
+
+  for (const file of ['.github/workflows/release.yml', 'ci/release.yml', 'scripts/release.ps1']) {
+    const source = read(file);
+    assert.ok(source.includes('JoeBrowserSetup.exe'), `${file} must distribute setup`);
+    assert.ok(!source.includes('JoeBrowser.exe'), `${file} must not distribute the legacy portable app`);
+  }
+  assert.doesNotMatch(read('README.md'), /download\/JoeBrowser\.exe/);
 });
