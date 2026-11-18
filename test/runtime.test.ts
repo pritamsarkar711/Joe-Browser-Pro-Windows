@@ -50,3 +50,11 @@ test('a failed runtime download can be retried', async () => {
   assert.equal((await resolve(profile)).engine, 'chrome');
   assert.equal(calls, 2);
 });
+
+test('automatic profiles ignore a newer installed prerelease, but can pin it explicitly', async () => {
+  const beta = { ...stable, id: 'chrome-151-Beta', channel: 'Beta', version: '151' };
+  const resolve = createRuntimeResolver({ installed: () => [local(beta), local(stable)], executable: () => '/managed/chrome.exe',
+    catalog: async () => { throw new Error('should work offline'); }, install: async () => { throw new Error('unexpected install'); } });
+  assert.equal((await resolve(profile)).version, stable.version);
+  assert.equal((await resolve({ ...profile, kernelId: beta.id })).version, beta.version);
+});

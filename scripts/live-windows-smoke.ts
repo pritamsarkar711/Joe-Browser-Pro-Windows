@@ -2,6 +2,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
+import { createServer } from 'node:http';
+import { SessionManager } from '../src/main/core/launcher';
+import { createProfile, deleteProfile, findProfileOrThrow, flushStore, invalidateStore, saveSettings, updateProfile } from '../src/main/core/store';
 import { execFileSync } from 'node:child_process';
 import { Paths } from '../src/main/core/paths';
 import { listKernels, downloadKernel, resolveKernelExe } from '../src/main/core/catalog';
@@ -9,6 +13,92 @@ import { addFromUrl, ensureShipped, shippedState } from '../src/main/core/librar
 import { INCLUDED_EXTENSIONS } from '../src/shared/extensionCatalog';
 import { ensureHumanPasteExtension } from '../src/main/core/humanPaste';
 import { chromium } from 'playwright-core';
+
+/** Exercise the actual manager with real browser storage on a controlled loopback origin. */
+async function verifyProfileLifecycle(): Promise<void> {
+  const server = createServer((_request, response) => {
+    response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    response.end('<title>Joe profile lifecycle</title>');
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  const origin = `http://127.0.0.1:${address.port}`;
+  const sessions = new SessionManager();
+  async function inspect(id: string, expected: string, write?: string): Promise<void> {
+    const info = await sessions.launch(findProfileOrThrow(id), origin);
+    assert.equal(info.state, 'running');
+    const endpoint = `http://127.0.0.1:${info.debugPort}`;
+    let connection: Awaited<ReturnType<typeof chromium.connectOverCDP>> | undefined;
+    try {
+      // A process can be running before its DevTools HTTP listener starts. Playwright
+      // does not retry connection refusals while discovering the websocket URL.
+      const deadline = Date.now() + 30_000;
+      let lastError: unknown;
+      while (Date.now() < deadline && sessions.isRunning(id)) {
+        try {
+          const response = await fetch(`${endpoint}/json/version`, { signal: AbortSignal.timeout(1000) });
+          const version = await response.json() as { webSocketDebuggerUrl?: string };
+          if (response.ok && version.webSocketDebuggerUrl) {
+            connection = await chromium.connectOverCDP(version.webSocketDebuggerUrl, { timeout: 10_000 });
+            break;
+          }
+          lastError = new Error(`No DevTools websocket in HTTP ${response.status} response`);
+        } catch (error) { lastError = error; }
+        await delay(250);
+      }
+      if (!connection) {
+        throw new Error(`DevTools never became ready for ${info.profileName} (state: ${info.state}, pid: ${info.pid})`, { cause: lastError });
+      }
+      const context = connection.contexts()[0]!;
+      const page = context.pages()[0] ?? await context.newPage();
+      await page.goto(origin, { timeout: 30_000 });
+      assert.equal(await page.title(), 'Joe profile lifecycle');
+      const actual = await page.evaluate(() => ({
+        cookie: document.cookie,
+        storage: localStorage.getItem('joe-smoke') ?? '',
+      }));
+      assert.deepEqual(actual, { cookie: expected ? `joe-smoke=${expected}` : '', storage: expected });
+      if (write) await page.evaluate(value => {
+        document.cookie = `joe-smoke=${value}; Max-Age=3600; Path=/`;
+        localStorage.setItem('joe-smoke', value);
+      }, write);
+    } finally {
+      try { await sessions.stop(id); }
+      finally { await connection?.close(); }
+    }
+  }
+  try {
+    saveSettings({ extensionsEnabled: false });
+    const first = createProfile({ name: 'Smoke A', engine: 'chrome', startUrl: origin });
+    const second = createProfile({ name: 'Smoke B', engine: 'chrome', startUrl: origin });
+    console.log('Launching profiles through SessionManager, starting with no managed Chrome installed');
+    await inspect(first.id, '', 'alpha');
+    await inspect(second.id, '', 'beta');
+    updateProfile(first.id, { name: 'Smoke A edited' });
+    flushStore();
+    invalidateStore();
+    assert.equal(findProfileOrThrow(first.id).name, 'Smoke A edited');
+    await inspect(first.id, 'alpha');
+    await inspect(second.id, 'beta');
+    updateProfile(first.id, { freshSession: true });
+    await inspect(first.id, '', 'temporary');
+    await inspect(first.id, '');
+    updateProfile(first.id, { freshSession: false });
+    await inspect(first.id, 'alpha');
+    deleteProfile(first.id, false);
+    assert.throws(() => findProfileOrThrow(first.id), /no longer exists/);
+    assert.ok(!fs.existsSync(Paths.profileData(first.id)), 'Deleted profile storage remains on disk');
+    await inspect(second.id, 'beta');
+    console.log('PASS: managed provisioning, profile isolation, storage persistence, fresh sessions and deletion.');
+  } finally {
+    try { await sessions.stopAll(); }
+    finally { await new Promise<void>(resolve => server.close(() => resolve())); }
+  }
+}
 
 /** Network-dependent vendor integration check, deliberately separate from offline unit tests. */
 async function main(): Promise<void> {
@@ -33,18 +123,12 @@ async function main(): Promise<void> {
     const extension = await addFromUrl(url);
     assert.equal(extension.item?.storeId, 'mpiodijhokgodhhofbcjdecpffjipkle');
     assert.ok(fs.existsSync(path.join(extension.item!.folder, 'manifest.json')));
-    console.log('Downloading an app-managed Chrome for Testing build');
-    const builds = await listKernels(true);
-    const build = builds.find((entry) => entry.engine === 'chrome' && entry.channel.toLowerCase() === 'stable');
-    assert.ok(build, 'The vendor catalog did not contain a stable Chrome build');
-    const installed = await downloadKernel(build, () => {});
-    const executable = resolveKernelExe(installed.id);
+    await verifyProfileLifecycle();
+    const builds = await listKernels();
+    const build = builds.find((entry) => entry.engine === 'chrome' && entry.installed && entry.channel.toLowerCase() === 'stable');
+    assert.ok(build, 'The profile launcher did not provision stable Chrome');
+    const executable = resolveKernelExe(build.id);
     assert.ok(executable && executable.startsWith(Paths.kernels + path.sep));
-    const output = execFileSync(executable, [
-      '--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
-      `--user-data-dir=${path.join(root, 'test-profile')}`, '--dump-dom', 'data:text/html,<title>Joe smoke</title>',
-    ], { timeout: 90_000, encoding: 'utf8', windowsHide: true });
-    assert.match(output, /Joe smoke/);
     console.log('Downloading and launching a verified app-managed Brave build');
     const brave = builds.find((entry) => entry.engine === 'brave' && entry.channel === 'stable');
     assert.ok(brave?.sha256 && brave.runtimeVersion, 'No verified Brave stable build was found');

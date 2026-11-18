@@ -881,25 +881,33 @@ test('clearing a live profile never clears unrelated storage or hides CDP errors
 });
 
 test('a proxy fallback is reported and never monitored as the active connection', async () => {
+  const { spawn } = await import('node:child_process');
   const net = await import('node:net');
   const { BrowserSession } = await import('../src/main/core/launcher');
   const upstream = net.createServer((socket) => socket.destroy());
   await new Promise<void>((resolve) => upstream.listen(0, '127.0.0.1', resolve));
   const port = (upstream.address() as import('node:net').AddressInfo).port;
-  const profile = store.draftProfile({ name: 'Proxy fallback', engine: 'firefox',
+  const profile = store.draftProfile({ name: 'Proxy fallback', engine: 'firefox', freshSession: true,
     proxy: { ...normalizeProxy({ type: 'http', host: '127.0.0.1', port }), fallbackDirect: true },
     tools: { ...store.defaultTools(), proxyWatch: true },
   });
-  const session = new BrowserSession(profile, async () => ({ exe: process.execPath, engine: 'firefox', version: '1' }));
+  let freshDir = '';
+  const session = new BrowserSession(profile, async () => ({ exe: process.execPath, engine: 'firefox', version: '1' }), {
+    spawnBrowser: ((_exe: string, args: string[]) => {
+      freshDir = args[args.indexOf('-profile') + 1]!;
+      return spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+    }) as typeof spawn,
+  });
   try {
     const info = await session.start(profile, 'about:blank');
     assert.equal(info.proxyFellBack, true);
     assert.equal((session as unknown as { watchTimer: unknown }).watchTimer, null);
     assert.equal(info.exitIp, '');
+    assert.ok(fs.existsSync(freshDir));
   } finally {
     await session.stop();
     await new Promise<void>((resolve) => upstream.close(() => resolve()));
-    fs.rmSync((await import('../src/main/core/paths')).Paths.profileData(profile.id), { recursive: true, force: true });
+    assert.ok(!fs.existsSync(freshDir), 'fresh storage is removed after the child stops');
   }
 });
 
@@ -1057,4 +1065,23 @@ test('cookie imports preserve SameSite and count only browser-accepted cookies',
   const cookie = { domain: 'example.test', name: 'accepted', value: 'secret', path: '/', expires: -1, httpOnly: true, secure: true, sameSite: 'Strict' };
   assert.equal(await session.importCookies([cookie, { ...cookie, name: 'rejected' }]), 1);
   assert.equal(params[0]!['sameSite'], 'Strict');
+});
+
+test('early browser exit fails startup and cleans fresh storage without touching persistent data', async () => {
+  const { BrowserSession } = await import('../src/main/core/launcher');
+  const { Paths } = await import('../src/main/core/paths');
+  const profile = store.draftProfile({ name: 'Fresh startup failure', engine: 'firefox', freshSession: true });
+  const durable = Paths.profileData(profile.id);
+  fs.mkdirSync(durable, { recursive: true });
+  const marker = path.join(durable, 'persisted');
+  fs.writeFileSync(marker, 'preserve');
+  const before = fs.readdirSync(Paths.profiles).filter(name => name.startsWith('fresh-'));
+  // Node is not a browser and exits immediately on Firefox's command-line arguments.
+  const session = new BrowserSession(profile, async () => ({ exe: process.execPath, engine: 'firefox', version: '1' }));
+  try {
+    await assert.rejects(session.start(profile), /Browser exited during startup/);
+    assert.equal(session.info.pid, 0);
+    assert.equal(fs.readFileSync(marker, 'utf8'), 'preserve');
+    assert.deepEqual(fs.readdirSync(Paths.profiles).filter(name => name.startsWith('fresh-')), before);
+  } finally { await session.stop(); }
 });

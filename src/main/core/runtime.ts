@@ -23,7 +23,7 @@ export function createRuntimeResolver(source: RuntimeServices = services) {
     const installed = source.installed().filter(build => build.engine === profile.engine)
       .sort((a, b) => compareVersions(b.version, a.version));
     for (const build of installed) {
-      if (profile.kernelId && build.id !== profile.kernelId) continue;
+      if (profile.kernelId ? build.id !== profile.kernelId : !/-stable$/i.test(build.id)) continue;
       const result = target(build);
       if (result) return result;
     }

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, Notification, Tray, ipcMain, nativeImage, nativeTheme, shell } from 'electron';
+import { app, BrowserWindow, Menu, Notification, Tray, ipcMain, dialog, nativeImage, nativeTheme, shell } from 'electron';
 import path from 'node:path';
 import { Paths } from './core/paths';
 import { registerIpc } from './ipc';
@@ -130,7 +130,7 @@ function buildTray(): void {
         label: 'Close all profiles',
         enabled: running.length > 0,
         click: () => {
-          void sessions.stopAll().then(refresh);
+          void sessions.stopAll().then(refresh).catch((error) => log.error('Could not close all profiles', error));
         },
       },
       {
@@ -349,10 +349,25 @@ app.on('window-all-closed', () => {
 
 // Browsers are children of this process; quitting without closing them leaves orphaned windows
 // the user has to find in Task Manager.
-app.on('before-quit', () => {
+let stoppingForQuit = false;
+app.on('before-quit', (event) => {
+  if (stoppingForQuit || sessions.list().length > 0) {
+    event.preventDefault();
+    if (stoppingForQuit) return;
+    stoppingForQuit = true;
+    void sessions.stopAll().then(() => {
+      stoppingForQuit = false;
+      app.quit();
+    }).catch((error) => {
+      stoppingForQuit = false;
+      quitting = false;
+      log.error('Could not close browser profiles before quitting', error);
+      dialog.showErrorBox('Could not quit Joe Browser', 'Close the remaining browser windows and try again.');
+    });
+    return;
+  }
   quitting = true;
   flushStore();
-  void sessions.stopAll();
 });
 
 app.on('will-quit', () => {
