@@ -365,7 +365,17 @@ export function ProfileEditor({
                     }
                   }}
                 >
-                  <option value={draft.engine}>{draft.engine} (automatic build)</option>
+                  <option value="chrome">Chrome for Testing (managed)</option>
+                  <option value="brave">Brave (managed)</option>
+                  <option value="joe">Joe Browser (Chrome for Testing runtime)</option>
+                  <option value="edge" disabled>Edge (no managed Windows build)</option>
+                  <option value="firefox" disabled>Firefox (no managed Windows build)</option>
+                  {!['chrome', 'brave', 'joe', 'edge', 'firefox'].includes(draft.engine) && (
+                    <option value={draft.engine}>{draft.engine} (existing selection)</option>
+                  )}
+                  {draft.kernelId && !kernels.some((kernel) => kernel.id === draft.kernelId) && (
+                    <option value={`kernel:${draft.kernelId}`}>{draft.kernelId} (pinned)</option>
+                  )}
                   {kernels.length > 0 ? (
                     <optgroup label={t('br.kernels')}>
                       {kernels.map((kernel) => (

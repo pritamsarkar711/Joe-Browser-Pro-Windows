@@ -66,8 +66,8 @@ and update/authenticity policies need explicit review before bundling branded br
    Do not advertise undetectability, independent physical devices or guaranteed checker passes.
 2. **Firefox timezone:** `joe.timezone` is a custom preference, not an effective implementation.
    Firefox also lacks the cookie/history/diagnostic functionality based on Chromium CDP.
-3. **Fresh session:** `freshSession` is persisted but no runtime cleanup implements the promise
-   to clear data on close. Needs reliable process-exit synchronization and deletion tests.
+3. **Fresh session:** temporary storage and post-exit cleanup are implemented in the follow-up.
+   Windows lock handling and cleanup after abrupt manager termination still need verification.
 4. **Process lifecycle:** OS spawn success does not prove browser health/CDP readiness. Retain
    browser stderr safely, detect immediate exits, test graceful shutdown/forced termination,
    multi-window sessions and crashes. Cancellation does not currently abort a shared download.
@@ -153,3 +153,59 @@ No copied third-party implementation or new dependency was added in this pass.
 Windows binaries, vendor archive downloads, live browser checkers and a real Windows installer
 were not run here. Runtime provisioning tests use injected catalog/installer services; they
 verify selection/lifecycle logic, not vendor availability or successful archive execution.
+
+## Follow-up: launch, shutdown and storage regressions
+
+This pass builds on the first remediation already checked into the base branch. The original
+Windows failure was not reproduced on the user's installation. Source review found additional
+failure modes: automatic profiles could select an installed beta, an immediately exiting process
+could be counted as open, and stop/delete could proceed before process exit. The profile editor
+also exposed only the currently selected automatic engine, rather than listing alternatives.
+
+- Automatic managed profiles now skip installed prereleases; explicit build pins still work.
+- A child that exits during the 750 ms startup observation window is reported as a launch error.
+  This catches immediate exits, not delayed crashes or failed DevTools attachment.
+- Stop waits for process exit, and deletion no longer ignores stop errors. Desktop quit waits for
+  session shutdown. A cancelled preparation checks its state before writing profile data or
+  spawning, and a relay acquired after cancellation is closed.
+- Fresh sessions use a unique browser data directory and attempt removal after exit. The existing
+  durable directory is untouched. This does not guarantee removal after power loss, force-quitting
+  the manager, locked files, or surviving browser descendants; it is not secure erasure.
+- The editor offers managed Chrome for Testing, Brave and Joe and labels unavailable Edge and
+  Firefox automatic Windows builds. Existing pins stay visible if catalog lookup fails.
+
+**Verification:** Linux `npm run typecheck`, `npm test` (117 passed), and `npm run build` passed.
+Lifecycle regressions use controlled child processes; renderer tests do not exercise a real Windows
+installer or browsers. Vite still warns about large renderer bundles. Full `npm audit` again reported
+20 advisories (1 critical, 14 high, 5 moderate); this pass does not close the dependency blocker.
+
+### GitHub research and integration decisions
+
+Repository metadata checked on 2026-11-18. These are candidates for specific jobs, not an
+assessment that any upstream dependency is safe to ship.
+
+| Upstream | License and maintenance signal | Fit and decision |
+|---|---|---|
+| [Playwright](https://github.com/microsoft/playwright) | Apache-2.0; active | Already used by Windows smoke scripts. Keep test-only; another browser management layer would add downloads and would not provide the requested branded offline runtimes. |
+| [geckodriver](https://github.com/mozilla/geckodriver) | MPL-2.0; non-archived, repository activity in August 2026 | Candidate for Firefox smoke tests after supplying a verified Windows runtime. It is a driver, not Firefox or a substitute for Chromium CDP. |
+| [Brave](https://github.com/brave/brave-browser) | MPL-2.0; active | Keep the existing managed vendor archive flow. Do not fork or repackage on the strength of the source license alone; release artifact terms, signatures and updater behavior need review. |
+| [PrivacyTests](https://github.com/privacytests/privacytests) | MIT; active | Candidate for independent state partitioning and privacy checks. Prefer isolated test runs over embedding its harness in the product. |
+| [arkenfox user.js](https://github.com/arkenfox/user.js) | MIT; non-archived, activity in October 2026 | Useful for reviewing Firefox privacy defaults. Do not copy the preference set wholesale: policies may change browser behavior and can break sites. |
+| [uBlock Origin](https://github.com/gorhill/uBlock) | GPL-3.0; active | Evaluate by engine, store and manifest support; recommend compatible upstream listings rather than vendoring extension source. |
+
+No third-party code was added. No external checker scores were collected. Before release, run
+fresh-install and offline-relaunch tests on Windows x64 for each supported engine; verify isolated
+cookies and local storage across two real profiles, restart persistence, deletion and recycle-bin
+restore, and compatible extension install/disable/remove after reopening. Exercise direct and
+proxied sessions against controlled endpoints first; use BrowserLeaks, IPHey, Pixelscan and IP
+Fighter as observations, not pass/fail proof of security or a substitute for testing browser state.
+
+### Windows verification gate
+
+The existing `Build EXE` workflow runs the packaged installer smoke and a separate live browser
+smoke. The live smoke now launches real Chrome through `SessionManager`, starting with no managed
+Chrome installed in its scratch workspace. It checks separate cookies and local storage on one
+loopback origin, reopening, profile edits reloaded from disk, fresh-session behavior, and deletion
+without affecting the second profile. It retains separate Brave and signed extension checks.
+This is not a simulated network outage, an authenticated packaged profile-launch test, or full
+extension lifecycle coverage. Dispatch the workflow with publishing disabled for verification.

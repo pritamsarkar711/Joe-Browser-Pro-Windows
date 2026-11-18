@@ -266,7 +266,7 @@ export function registerIpc(context: IpcContext): void {
   });
 
   handle<void>('profiles:delete', async (id: string) => {
-    await sessions.stop(id).catch(() => undefined);
+    await sessions.stop(id);
     deleteProfile(id);
     changed();
   });
@@ -411,7 +411,7 @@ export function registerIpc(context: IpcContext): void {
 
   handle<number>('profiles:bulkDelete', (ids: string[]) =>
     bulk(ids, async (id) => {
-      await sessions.stop(id).catch(() => undefined);
+      await sessions.stop(id);
       deleteProfile(id);
     }),
   );

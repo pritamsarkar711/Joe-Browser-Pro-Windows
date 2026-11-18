@@ -35,6 +35,7 @@ import { buildIdentity } from './ua';
  */
 
 export interface SessionOptions {
+  spawnBrowser?: typeof spawn;
   onToast?: (message: string, detail: string, nativeOnly?: boolean) => void;
 }
 
@@ -89,6 +90,8 @@ export class BrowserSession extends EventEmitter {
   private watchTimer: NodeJS.Timeout | null = null;
   private debugPort = 0;
   private dataDir: string;
+  private ephemeralDir: string | null = null;
+  private teardownTask: Promise<void> | null = null;
   private readonly options: SessionOptions;
 
   constructor(
@@ -123,8 +126,6 @@ export class BrowserSession extends EventEmitter {
   }
 
   async start(profile: Profile, startUrl?: string): Promise<SessionInfo> {
-    Paths.ensure(this.dataDir, Paths.logs);
-
     const target = await this.exeFor(profile);
     if (this.closing) throw new Error('Profile launch was cancelled.');
     const engine = target.engine;
@@ -140,7 +141,12 @@ export class BrowserSession extends EventEmitter {
     let proxyArg = '';
     if (proxyEnabled(profile.proxy)) {
       const password = proxyPasswordOf(profile);
-      this.relay = await startRelay(upstreamOf(profile.proxy, password));
+      const relay = await startRelay(upstreamOf(profile.proxy, password));
+      if (this.closing) {
+        await relay.close();
+        throw new Error('Profile launch was cancelled.');
+      }
+      this.relay = relay;
       proxyArg = `socks5://127.0.0.1:${this.relay.port}`;
 
       // Prove the proxy answers before the browser is pointed at it. A silent dead proxy shows
@@ -154,7 +160,7 @@ export class BrowserSession extends EventEmitter {
         this.info.exitIp = '';
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        this.relay.setUpstream(upstreamOf(profile.proxy, password));
+        if (this.closing) throw new Error('Profile launch was cancelled.');
         this.options.onToast?.(
           profile.proxy.fallbackDirect ? 'The proxy did not answer - the profile will open directly.' : 'The proxy did not answer.',
           message,
@@ -180,6 +186,8 @@ export class BrowserSession extends EventEmitter {
       this.info.debugPort = this.debugPort;
     }
 
+    if (this.closing) throw new Error('Profile launch was cancelled.');
+
     // The extensions are written on every launch, so a folder the user deleted comes back and a
     // store build that could not be fetched never leaves the tools missing.
     const settings = getSettings();
@@ -193,6 +201,15 @@ export class BrowserSession extends EventEmitter {
     const extensions = isFirefox
       ? []
       : profileExtensionFolders(profile, masterEnabled, settings.customExtensionsEnabled);
+
+    if (this.closing) throw new Error('Profile launch was cancelled.');
+    Paths.ensure(Paths.profiles, Paths.logs);
+    if (profile.freshSession) {
+      this.ephemeralDir = fs.mkdtempSync(path.join(Paths.profiles, 'fresh-'));
+      this.dataDir = this.ephemeralDir;
+    } else {
+      Paths.ensure(this.dataDir);
+    }
 
     const args = isFirefox
       ? this.firefoxArgs(profile, proxyArg, startUrl)
@@ -215,7 +232,7 @@ export class BrowserSession extends EventEmitter {
     });
 
     if (this.closing) throw new Error('Profile launch was cancelled.');
-    const child = spawn(target.exe, args, {
+    const child = (this.options.spawnBrowser ?? spawn)(target.exe, args, {
       cwd: path.dirname(target.exe),
       detached: false,
       stdio: 'ignore',
@@ -224,17 +241,27 @@ export class BrowserSession extends EventEmitter {
     });
 
     this.child = child;
-    child.once('exit', () => void this.teardown());
+    child.once('exit', (code, signal) => {
+      if (!this.closing && this.info.state === 'starting') {
+        this.info.state = 'failed';
+        this.info.lastError = `Browser exited during startup (${signal ?? code}).`;
+        this.emit('changed', this.info);
+      }
+      void this.teardown();
+    });
     child.once('error', (error) => {
       this.info.state = 'failed';
       this.info.lastError = error.message;
       this.emit('changed', this.info);
-      void this.teardown();
+      if (!child.pid || child.exitCode !== null || child.signalCode !== null) void this.teardown();
     });
     await new Promise<void>((resolve, reject) => {
       child.once('spawn', resolve);
       child.once('error', reject);
     });
+    // A successful OS spawn can still be an immediate browser startup failure.
+    await delay(750);
+    if (this.closing) throw new Error(this.info.lastError || 'Profile launch was cancelled.');
     log.info(`launched ${profile.name} with ${path.basename(target.exe)} ${this.info.browserVersion}`);
     this.info.pid = child.pid ?? 0;
     this.info.engine = engine;
@@ -711,6 +738,7 @@ export class BrowserSession extends EventEmitter {
 
   async stop(): Promise<void> {
     this.closing = true;
+    if (this.teardownTask) return this.teardownTask;
     this.info.state = 'closing';
     this.emit('changed', this.info);
 
@@ -724,23 +752,27 @@ export class BrowserSession extends EventEmitter {
 
     const child = this.child;
     if (child && child.exitCode === null && child.signalCode === null) {
-      // Give the browser a moment to shut down cleanly so its storage is not left mid-write.
-      const deadline = Date.now() + 4000;
-      while (child.exitCode === null && child.signalCode === null && Date.now() < deadline) await delay(120);
-      if (child.exitCode === null && child.signalCode === null) {
-        try {
-          child.kill();
-        } catch {
-          /* already gone */
-        }
-      }
+      const exited = () => child.exitCode !== null || child.signalCode !== null;
+      const wait = async (ms: number) => {
+        const deadline = Date.now() + ms;
+        while (!exited() && Date.now() < deadline) await delay(100);
+      };
+      if (this.cdp) await wait(4000);
+      if (!exited()) child.kill();
+      await wait(2000);
+      if (!exited()) child.kill('SIGKILL');
+      await wait(2000);
+      if (!exited()) throw new Error('Browser is still running; its profile data was not cleared.');
     }
 
     await this.teardown();
   }
 
-  private async teardown(): Promise<void> {
-    if (this.closing && this.info.state === 'stopped') return;
+  private teardown(): Promise<void> {
+    return this.teardownTask ??= this.releaseResources();
+  }
+
+  private async releaseResources(): Promise<void> {
     this.closing = true;
 
     if (this.watchTimer) {
@@ -757,6 +789,11 @@ export class BrowserSession extends EventEmitter {
       this.relay = null;
     }
 
+    if (this.ephemeralDir) {
+      try { fs.rmSync(this.ephemeralDir, { recursive: true, force: true, maxRetries: 3 }); }
+      catch { this.emit('notice', { kind: 'warn', message: 'Fresh session data could not be removed', detail: this.ephemeralDir }); }
+      this.ephemeralDir = null;
+    }
     this.child = null;
     this.info.state = 'stopped';
     this.emit('changed', this.info);
@@ -826,8 +863,7 @@ export class SessionManager {
     try {
       return await session.start(profile, startUrl);
     } catch (error) {
-      await session.stop().catch(() => undefined);
-      if (this.sessions.get(profile.id) === session) this.sessions.delete(profile.id);
+      await session.stop();
       throw error;
     }
   }
@@ -836,12 +872,13 @@ export class SessionManager {
     const session = this.sessions.get(profileId);
     if (!session) return;
     await session.stop();
-    this.sessions.delete(profileId);
+    if (this.sessions.get(profileId) === session) this.sessions.delete(profileId);
   }
 
   async stopAll(): Promise<void> {
-    await Promise.all([...this.sessions.values()].map((s) => s.stop().catch(() => undefined)));
-    this.sessions.clear();
+    const outcomes = await Promise.allSettled([...this.sessions.values()].map((s) => s.stop()));
+    const failure = outcomes.find((result) => result.status === 'rejected');
+    if (failure) throw failure.reason;
   }
 
   sessionFor(profileId: string): BrowserSession | undefined {
