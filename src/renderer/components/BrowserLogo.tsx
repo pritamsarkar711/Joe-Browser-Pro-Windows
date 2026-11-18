@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { siFirefoxbrowser } from 'simple-icons/icons';
+import { siFirefoxbrowser } from 'simple-icons';
 import { Icon } from './Icon';
 import { Logo } from './Brand';
 

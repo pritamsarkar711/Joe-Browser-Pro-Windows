@@ -21,6 +21,8 @@
   catalog cache from dropping Brave builds after a schema upgrade.
 - Stop detected system browsers from becoming a default engine that has no managed build; Edge
   remains detection-only and Safari has no Windows build.
+- Fix the deprecated `simple-icons/icons` import path that warned on every test run and would
+  break in simple-icons v17; icons now import from `simple-icons` directly.
 
 ## 2.2.0
 
