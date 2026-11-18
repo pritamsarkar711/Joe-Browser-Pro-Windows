@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { createServer } from 'node:http';
 import { SessionManager } from '../src/main/core/launcher';
 import { createProfile, deleteProfile, findProfileOrThrow, flushStore, invalidateStore, saveSettings, updateProfile } from '../src/main/core/store';
@@ -30,8 +31,28 @@ async function verifyProfileLifecycle(): Promise<void> {
   async function inspect(id: string, expected: string, write?: string): Promise<void> {
     const info = await sessions.launch(findProfileOrThrow(id), origin);
     assert.equal(info.state, 'running');
-    const connection = await chromium.connectOverCDP(`http://127.0.0.1:${info.debugPort}`, { timeout: 30_000 });
+    const endpoint = `http://127.0.0.1:${info.debugPort}`;
+    let connection: Awaited<ReturnType<typeof chromium.connectOverCDP>> | undefined;
     try {
+      // A process can be running before its DevTools HTTP listener starts. Playwright
+      // does not retry connection refusals while discovering the websocket URL.
+      const deadline = Date.now() + 30_000;
+      let lastError: unknown;
+      while (Date.now() < deadline && sessions.isRunning(id)) {
+        try {
+          const response = await fetch(`${endpoint}/json/version`, { signal: AbortSignal.timeout(1000) });
+          const version = await response.json() as { webSocketDebuggerUrl?: string };
+          if (response.ok && version.webSocketDebuggerUrl) {
+            connection = await chromium.connectOverCDP(version.webSocketDebuggerUrl, { timeout: 10_000 });
+            break;
+          }
+          lastError = new Error(`No DevTools websocket in HTTP ${response.status} response`);
+        } catch (error) { lastError = error; }
+        await delay(250);
+      }
+      if (!connection) {
+        throw new Error(`DevTools never became ready for ${info.profileName} (state: ${info.state}, pid: ${info.pid})`, { cause: lastError });
+      }
       const context = connection.contexts()[0]!;
       const page = context.pages()[0] ?? await context.newPage();
       await page.goto(origin, { timeout: 30_000 });
@@ -47,7 +68,7 @@ async function verifyProfileLifecycle(): Promise<void> {
       }, write);
     } finally {
       try { await sessions.stop(id); }
-      finally { await connection.close(); }
+      finally { await connection?.close(); }
     }
   }
   try {
