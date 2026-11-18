@@ -164,6 +164,9 @@ export function ExtensionsPage({
           )}
 
           <div className="section-label">{t('ext.recommended')}</div>
+          <p className="muted">Chromium-family extensions only; Firefox is not supported by this library.
+            Changes apply when profiles are reopened. Extensions can access browsing data and alter
+            fingerprint surfaces—install only what you need.</p>
           <div className="tiles">
             {(report?.recommended ?? []).map((item) => (
               <div className="tile" key={item.url} style={{ minHeight: 96 }}>
@@ -174,6 +177,7 @@ export function ExtensionsPage({
                 </div>
                 <div>
                   <div className="tile-title">{item.name}</div>
+                  <p className="muted">{item.description}</p>
                 </div>
                 <div className="tile-foot">
                   <Button size="sm" variant="soft" icon="download" busy={busy === item.url} disabled={!!busy || library.some((installed) => installed.storeUrl === item.url)}

@@ -126,14 +126,26 @@ test('extension manifest labels resolve the publisher default locale', async () 
   assert.equal(item.description, 'Publisher description');
 });
 
-test('recommended extensions have official listing IDs and bundled artwork', async () => {
+test('recommended extensions have official listing IDs and valid optional artwork', async () => {
   const { RECOMMENDED_EXTENSIONS } = await import('../src/shared/extensionCatalog');
   assert.ok(RECOMMENDED_EXTENSIONS.length >= 10 && RECOMMENDED_EXTENSIONS.length <= 15);
   assert.ok(RECOMMENDED_EXTENSIONS.some(item => item.name === 'SingleFile' && storeListingId(item.url) === 'mpiodijhokgodhhofbcjdecpffjipkle'));
   assert.ok(RECOMMENDED_EXTENSIONS.some(item => item.name === 'Consent-O-Matic' && storeListingId(item.url) === 'mdjildafknihdffpkfmmpnpoiajfjnjd'));
-  assert.ok(!RECOMMENDED_EXTENSIONS.some(item => /ublock|bitwarden/i.test(item.name)));
+  assert.ok(RECOMMENDED_EXTENSIONS.some(item => item.name === 'uBlock Origin Lite' && storeListingId(item.url) === 'ddkjiahejlhfcafbddmgiahcphecmpfh'));
   for (const item of RECOMMENDED_EXTENSIONS) {
     assert.ok(storeListingId(item.url), item.name);
-    assert.ok(fs.existsSync(path.join(process.cwd(), 'public', item.icon.replace(/^\.\//, ''))), item.name);
+    if (item.icon) assert.ok(fs.existsSync(path.join(process.cwd(), 'public', item.icon.replace(/^\.\//, ''))), item.name);
   }
+});
+
+test('recommended extensions explain their purpose and Firefox never receives Chromium folders', async () => {
+  const { RECOMMENDED_EXTENSIONS } = await import('../src/shared/extensionCatalog');
+  const { profileExtensionFolders } = await import('../src/main/core/library');
+  assert.ok(RECOMMENDED_EXTENSIONS.some(item => item.name === 'uBlock Origin Lite'));
+  for (const item of RECOMMENDED_EXTENSIONS) {
+    assert.ok(item.description.length > 15, item.name);
+    assert.ok(storeListingId(item.url), item.url);
+  }
+  const { draftProfile } = await import('../src/main/core/store');
+  assert.deepEqual(profileExtensionFolders(draftProfile({ engine: 'firefox' }), true, true), []);
 });

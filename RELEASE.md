@@ -9,12 +9,12 @@ The Windows pipeline is `.github/workflows/release.yml`; keep its reference copy
 4. Dispatch **Build EXE** on that branch with `prerelease=true` to validate a release candidate.
 5. Check all Windows gates, then merge the PR and promote the tested release.
 
-The workflow installs dependencies, typechecks, builds, runs the suites, packages NSIS and
-portable artifacts, then runs `node scripts/windows-smoke.mjs` **before** publishing.
+The workflow installs dependencies, typechecks, builds, runs the suites, packages the assisted NSIS
+installer, then runs `node scripts/windows-smoke.mjs` **before** publishing.
 The smoke test uses a disposable custom installation directory containing spaces, installs
-all-users silently, launches the installed executable with a real preload/IPC bridge,
-completes the first-run choice by continuing without an account (the local, free path - no
-account is created anywhere), checks that reopening the app remembers it, visits every page,
+per-user silently, launches the installed executable with a real preload/IPC bridge,
+checks the required account gate and that a legacy local-mode choice cannot bypass it,
+uses an isolated cloud stub to visit workspace pages,
 then uninstalls and checks that workspace data remains. It fails on page errors.
 No test account is created on an external service, and no network traffic is generated
 against the licensing backend.
@@ -24,7 +24,10 @@ changed binaries. Release assets:
 
 - `JoeBrowserSetup.exe`: assisted Windows installation (license, install scope, destination,
   shortcuts, completion/launch, Add/Remove Programs uninstaller).
-- `JoeBrowser.exe`: portable executable, intentionally no installation wizard.
+
+Do not build or attach a portable executable or the `win-unpacked` app payload. Older releases
+may still contain `JoeBrowser.exe`, which opens directly and is not an installer. A new release
+is required to deliver this packaging change; previously downloaded files are unchanged.
 
 All-users setup requests UAC elevation; per-user setup and normal app execution do not.
 The binaries are not code-signed: neither UAC settings nor the wizard can remove SmartScreen's

@@ -91,7 +91,7 @@ jobs:
         shell: bash
         run: |
           set -eu
-          for file in release/JoeBrowserSetup.exe release/JoeBrowser.exe; do
+          for file in release/JoeBrowserSetup.exe; do
             if [ ! -f "$file" ]; then
               echo "::error::$file was not produced by electron-builder"
               ls -la release || true
@@ -126,7 +126,6 @@ jobs:
           name: windows-verification-binaries
           path: |
             release/JoeBrowserSetup.exe
-            release/JoeBrowser.exe
           if-no-files-found: error
           retention-days: 7
 
@@ -147,4 +146,3 @@ jobs:
           fail_on_unmatched_files: true
           files: |
             release/JoeBrowserSetup.exe
-            release/JoeBrowser.exe

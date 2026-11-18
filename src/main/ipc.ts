@@ -399,8 +399,9 @@ export function registerIpc(context: IpcContext): void {
     bulk(ids, async (id) => {
       const profile = findProfile(id);
       if (!profile) return;
-      updateProfile(id, { lastOpenedAt: new Date().toISOString(), openCount: profile.openCount + 1 });
-      await sessions.launch(findProfile(id) ?? profile);
+      const alreadyRunning = sessions.isRunning(id);
+      await sessions.launch(profile);
+      if (!alreadyRunning) updateProfile(id, { lastOpenedAt: new Date().toISOString(), openCount: profile.openCount + 1 });
     }),
   );
 
@@ -428,11 +429,14 @@ export function registerIpc(context: IpcContext): void {
         `This drive has only ${human(space.free)} free. Free some space, or clear old profile caches from Tools, and try again.`,
       );
     }
-    updateProfile(id, {
+    const alreadyRunning = sessions.isRunning(id);
+    const info = await sessions.launch(profile, url);
+    if (!alreadyRunning) updateProfile(id, {
       lastOpenedAt: new Date().toISOString(),
       openCount: profile.openCount + 1,
     });
-    return sessions.launch(findProfile(id) ?? profile, url);
+    changed();
+    return info;
   });
 
   handle<void>('sessions:stop', (id: string) => sessions.stop(id));
@@ -490,9 +494,11 @@ export function registerIpc(context: IpcContext): void {
   });
 
   handle<void>('kernels:remove', async (id: string) => {
+    const build = installedKernels().find(item => item.id === id);
     for (const info of sessions.list()) {
-      if (findProfile(info.profileId)?.kernelId === id) {
-        throw new Error('A running profile is pinned to that build. Close it first.');
+      const profile = findProfile(info.profileId);
+      if (profile?.kernelId === id || (build && profile?.engine === build.engine)) {
+        throw new Error('A starting or running profile may be using this browser build. Close profiles using this engine first.');
       }
     }
     await removeKernel(id);

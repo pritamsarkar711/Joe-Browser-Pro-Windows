@@ -1016,3 +1016,45 @@ test('new profiles honor the configured start page and preserve explicit URLs', 
     assert.equal(store.draftProfile({ name: 'Custom start', startUrl: 'https://custom.example/' }).startUrl, 'https://custom.example/');
   } finally { store.saveSettings({ startPage: before }); }
 });
+
+test('launch rejects missing executables instead of reporting a running browser', async () => {
+  const { BrowserSession } = await import('../src/main/core/launcher');
+  const profile = store.draftProfile({ name: 'Missing executable', engine: 'firefox' });
+  const session = new BrowserSession(profile, async () => ({ exe: path.join(scratch, 'does-not-exist.exe'), engine: 'firefox', version: '1' }));
+  try {
+    await assert.rejects(session.start(profile), /ENOENT/);
+    assert.notEqual(session.info.state, 'running');
+    assert.match(session.info.lastError, /ENOENT/);
+  } finally { await session.stop(); }
+});
+
+test('stopping a profile during runtime provisioning cancels spawning', async () => {
+  const { BrowserSession } = await import('../src/main/core/launcher');
+  const profile = store.draftProfile({ name: 'Cancelled launch', engine: 'firefox' });
+  let release!: (value: { exe: string; engine: string; version: string }) => void;
+  const runtime = new Promise<{ exe: string; engine: string; version: string }>(resolve => { release = resolve; });
+  const session = new BrowserSession(profile, () => runtime);
+  const launch = session.start(profile);
+  await session.stop();
+  release({ exe: process.execPath, engine: 'firefox', version: '1' });
+  await assert.rejects(launch, /cancelled/);
+  assert.equal(session.info.pid, 0);
+  assert.equal(session.info.state, 'stopped');
+});
+
+test('cookie imports preserve SameSite and count only browser-accepted cookies', async () => {
+  const { BrowserSession } = await import('../src/main/core/launcher');
+  const profile = store.draftProfile({ name: 'Cookie import', engine: 'chrome' });
+  const session = new BrowserSession(profile, async () => { throw new Error('not used'); });
+  const params: Record<string, unknown>[] = [];
+  const fake = { send: async (method: string, input: Record<string, unknown>) => {
+    if (method === 'Target.getTargets') return { targetInfos: [{ type: 'page', targetId: 'page' }] };
+    if (method === 'Target.attachToTarget') return { sessionId: 'session' };
+    if (method === 'Network.setCookie') { params.push(input); return { success: input['name'] === 'accepted' }; }
+    return {};
+  } };
+  (session as unknown as { cdp: unknown }).cdp = fake;
+  const cookie = { domain: 'example.test', name: 'accepted', value: 'secret', path: '/', expires: -1, httpOnly: true, secure: true, sameSite: 'Strict' };
+  assert.equal(await session.importCookies([cookie, { ...cookie, name: 'rejected' }]), 1);
+  assert.equal(params[0]!['sameSite'], 'Strict');
+});
