@@ -1,4 +1,4 @@
-import { siTelegram } from 'simple-icons/icons';
+import { siTelegram } from 'simple-icons';
 import type { ComponentType, ReactNode } from 'react';
 import People from '@mui/icons-material/People';
 import History from '@mui/icons-material/History';
