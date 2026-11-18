@@ -344,17 +344,46 @@ try {
   }
 } catch(e){}
 
-/* ---- audio ---- */
+/* ---- audio ----
+   Like the canvas table, the offset is a function of the bin index and the seed - not of how
+   many times the page has called the method. An advancing stream made two consecutive reads of
+   the same analyser disagree, which is the audio equivalent of a tampered canvas. */
 try {
   if (C.audioNoise && win.AnalyserNode) {
-    var realFloat = win.AnalyserNode.prototype.getFloatFrequencyData;
-    win.AnalyserNode.prototype.getFloatFrequencyData = mask(function getFloatFrequencyData(array){
-      realFloat.call(this, array);
+    var audioNoiseTable = (function(){
+      var table = [];
+      var st = (C.seed >>> 0) || 1;
+      for (var i = 0; i < 512; i++) {
+        st = (st + 0x6D2B79F5) >>> 0;
+        var t = st;
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        table.push((((t ^ (t >>> 14)) >>> 0) / 4294967296) - 0.5);
+      }
+      return table;
+    })();
+    function floatAudio(array){
+      try { for (var i = 0; i < array.length; i++) array[i] = array[i] + audioNoiseTable[i & 511] * 1e-4; } catch(e){}
+    }
+    function byteAudio(array){
       try {
         for (var i = 0; i < array.length; i++) {
-          array[i] = array[i] + (rnd() - 0.5) * 1e-4;
+          var next = array[i] + (audioNoiseTable[i & 511] < 0 ? -1 : 1);
+          array[i] = next < 0 ? 0 : next > 255 ? 255 : next;
         }
       } catch(e){}
+    }
+    var analyserProto = win.AnalyserNode.prototype;
+    [['getFloatFrequencyData', floatAudio], ['getByteFrequencyData', byteAudio],
+     ['getFloatTimeDomainData', floatAudio], ['getByteTimeDomainData', byteAudio]]
+    .forEach(function(entry){
+      var name = entry[0], masker = entry[1];
+      var real = analyserProto[name];
+      if (!real) return;
+      analyserProto[name] = mask(function(){
+        real.apply(this, arguments);
+        masker(arguments[0]);
+      });
     });
   }
   if (C.audioNoise && win.OfflineAudioContext) {

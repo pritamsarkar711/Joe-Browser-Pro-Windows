@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react';
-import { KeyOutlined } from '@mui/icons-material';
+import KeyOutlined from '@mui/icons-material/KeyOutlined';
 import { cloud, daysLeft } from '../cloud/client';
 import { useSubscription } from '../cloud/subscription';
 import { ActivateDialog } from './ActivateDialog';

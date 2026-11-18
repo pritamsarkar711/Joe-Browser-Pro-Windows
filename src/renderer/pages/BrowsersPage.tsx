@@ -119,6 +119,9 @@ export function BrowsersPage({
   };
 
   const installed = kernels.filter((kernel) => kernel.installed);
+  // Detection is informational: a system browser can only become the default once an
+  // app-managed build of the same engine is installed, because that is what profiles launch.
+  const installedEngines = new Set(installed.map((kernel) => kernel.engine));
 
   return (
     <>
@@ -163,15 +166,17 @@ export function BrowsersPage({
                     <div className="row-sub mono">{browser.path}</div>
                   </div>
                   <div className="row-actions">
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      icon="check"
-                      onClick={() => void saveSettings({ defaultEngine: browser.engine })}
-                      title={t('set.browser')}
-                    >
-                      {t('set.browser')}
-                    </Button>
+                    {installedEngines.has(browser.engine) ? (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        icon="check"
+                        onClick={() => void saveSettings({ defaultEngine: browser.engine })}
+                        title={t('set.browser')}
+                      >
+                        {t('set.browser')}
+                      </Button>
+                    ) : null}
                   </div>
                 </div>
               ))}
@@ -190,7 +195,7 @@ export function BrowsersPage({
                   </div>
                   <div className="row-main">
                     <div className="row-title">
-                      {kernel.engine} {kernel.version}
+                      {t(`br.engine.${kernel.engine}`, kernel.engine)} {kernel.version}
                       <Chip tone="ok">{t('br.installed')}</Chip>
                       {kernel.channel && kernel.channel !== 'stable' ? <Chip tone="warn">{kernel.channel}</Chip> : null}
                     </div>
@@ -220,7 +225,7 @@ export function BrowsersPage({
                       </div>
                       <div className="row-main">
                         <div className="row-title">
-                          {kernel.engine} {kernel.version}
+                          {t(`br.engine.${kernel.engine}`, kernel.engine)} {kernel.version}
                           <Chip tone="muted">{kernel.channel}</Chip>
                         </div>
                         <div className="row-sub">
@@ -293,11 +298,14 @@ export function BrowsersPage({
                 onChange={(event) => void saveSettings({ defaultEngine: event.target.value })}
               >
                 <option value="auto">{t('ed.engine.system')}</option>
-                {['chrome', 'chromium', 'edge', 'brave', 'firefox'].map((engine) => (
+                {['joe', 'chrome', 'chromium', 'brave', 'firefox'].map((engine) => (
                   <option key={engine} value={engine}>
                     {t(`br.engine.${engine}`, engine)}
                   </option>
                 ))}
+                {/* Edge is detected but has no app-managed build, so it can be seen and left,
+                    not newly chosen for a profile that then cannot launch. */}
+                <option value="edge" disabled>{t('br.engine.edge')}</option>
               </select>
             </Field>
             <div className="divider" />

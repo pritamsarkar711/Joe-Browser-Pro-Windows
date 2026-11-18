@@ -93,11 +93,12 @@ export function SettingsPage({ settings, info, saveSettings, refreshProfiles, on
               <div className="form-grid">
                 <Field label={t('set.browser')}><select className="select" value={settings.defaultEngine} onChange={event => void save({ defaultEngine: event.target.value })}>
                   <option value="auto">{t('ed.engine.system')}</option>
-                  {['chrome', 'chromium', 'edge', 'brave', 'firefox'].map(engine => <option key={engine} value={engine}>{t(`br.engine.${engine}`, engine)}</option>)}
+                  {['joe', 'chrome', 'chromium', 'brave', 'firefox'].map(engine => <option key={engine} value={engine}>{t(`br.engine.${engine}`, engine)}</option>)}
+                  <option value="edge" disabled>{t('br.engine.edge')}</option>
                 </select></Field>
                 <Field label={t('set.kernel')}><select className="select" value={settings.defaultKernelId} onChange={event => void save({ defaultKernelId: event.target.value })}>
                   <option value="">{t('set.kernel.spread')}</option>
-                  {kernels.filter(kernel => kernel.installed).map(kernel => <option key={kernel.id} value={kernel.id}>{kernel.engine} {kernel.version}</option>)}
+                  {kernels.filter(kernel => kernel.installed).map(kernel => <option key={kernel.id} value={kernel.id}>{t(`br.engine.${kernel.engine}`, kernel.engine)} {kernel.version}</option>)}
                 </select></Field>
                 <Field label={t('set.start')}><input className="input mono" value={settings.startPage} onChange={event => void save({ startPage: event.target.value })} spellCheck={false} /></Field>
               </div>

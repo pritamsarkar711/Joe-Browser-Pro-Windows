@@ -378,30 +378,34 @@ export function ProfileEditor({
                 </select>
               </Field>
 
-              <Field label={t('ed.status')}>
-                <input
-                  className="input"
-                  value={draft.status}
-                  onChange={(event) => patch({ status: event.target.value })}
-                  list="joe-statuses"
-                  placeholder="idle"
-                  spellCheck={false}
-                />
-                <datalist id="joe-statuses">
-                  <option value="new" />
-                  <option value="warm" />
-                  <option value="idle" />
-                  <option value="banned" />
-                </datalist>
-              </Field>
+              {isNew ? null : (
+                <>
+                  <Field label={t('ed.status')}>
+                    <input
+                      className="input"
+                      value={draft.status}
+                      onChange={(event) => patch({ status: event.target.value })}
+                      list="joe-statuses"
+                      placeholder="idle"
+                      spellCheck={false}
+                    />
+                    <datalist id="joe-statuses">
+                      <option value="new" />
+                      <option value="warm" />
+                      <option value="idle" />
+                      <option value="banned" />
+                    </datalist>
+                  </Field>
 
-              <Field label={t('ed.notes')}>
-                <input
-                  className="input"
-                  value={draft.notes}
-                  onChange={(event) => patch({ notes: event.target.value })}
-                />
-              </Field>
+                  <Field label={t('ed.notes')}>
+                    <input
+                      className="input"
+                      value={draft.notes}
+                      onChange={(event) => patch({ notes: event.target.value })}
+                    />
+                  </Field>
+                </>
+              )}
 
               <div className="span-all divider" />
 
@@ -410,7 +414,6 @@ export function ProfileEditor({
                   checked={draft.freshSession}
                   onChange={(freshSession) => patch({ freshSession })}
                   label={t('ed.fresh')}
-                  detail={t('ed.fresh.hint')}
                 />
               </div>
             </div>
@@ -437,18 +440,14 @@ export function ProfileEditor({
             {clash ? (
               <Banner tone="warn" icon="link">
                 <b>{t('ed.fp.clash').replace('{name}', clash)}</b>
-                <div style={{ marginTop: 3 }}>{t('ed.fp.clash.body')}</div>
               </Banner>
             ) : null}
 
             {firefoxWarning ? (
               <Banner tone="warn" icon="info">
                 <b>{t('ed.fp.firefox')}</b>
-                <div style={{ marginTop: 3 }}>{t('ed.fp.firefox.body')}</div>
               </Banner>
             ) : null}
-
-            <Banner>{t('ed.fp.emulation')}</Banner>
 
             <div className="section-label">{t('ed.fp.locale.sub')}</div>
             <div className="form-grid three">
@@ -538,7 +537,7 @@ export function ProfileEditor({
 
             <div className="section-label">{t('ed.fp.hardware.sub')}</div>
             <div className="form-grid">
-              <Field label={t('ed.gpu')} hint={fp.webGlVendor} span={2}>
+              <Field label={t('ed.gpu')} span={2}>
                 <input
                   className="input mono"
                   value={fp.webGlRenderer}
@@ -641,12 +640,9 @@ export function ProfileEditor({
                   checked={fp.autoMatchProxy}
                   onChange={(autoMatchProxy) => patchFingerprint({ autoMatchProxy })}
                   label={t('ed.automatch')}
-                  detail={t('ed.proxy.match')}
                 />
               </div>
             </div>
-
-            <div className="section-label">{t('ed.webrtc')}</div>
           </div>
         ) : null}
 
@@ -709,7 +705,6 @@ export function ProfileEditor({
                 <div className="span-all">
                   <Banner tone="info" icon="globe">
                     <b>{t('ed.proxy.none')}</b>
-                    <div style={{ marginTop: 3 }}>{t('ed.proxy.none.hint')}</div>
                   </Banner>
                 </div>
               ) : (
@@ -775,7 +770,6 @@ export function ProfileEditor({
                       checked={draft.proxy.fallbackDirect}
                       onChange={(fallbackDirect) => patchProxy({ fallbackDirect })}
                       label="Fall back to a direct connection"
-                      detail="Keeps the session usable when the proxy stops answering, at the cost of revealing this PC's address."
                     />
                   </div>
                 </>
@@ -786,17 +780,12 @@ export function ProfileEditor({
 
         {tab === 'tools' ? (
           <div className="stack">
-            <span className="muted" style={{ fontSize: 12.5 }}>
-              {t('ed.tools.sub')}
-            </span>
-
             <div className="form-grid">
               <Toggle
                 checked={!firefoxWarning && draft.tools.humanPaste}
                 onChange={(humanPaste) => patchTools({ humanPaste })}
                 label={t('ed.humanpaste')}
                 disabled={firefoxWarning}
-                detail={firefoxWarning ? 'Not available in Firefox profiles.' : 'Use Paste as Human from an editable field’s context menu.'}
               />
               <Field label={t('ed.humanspeed')}>
                 <select
@@ -817,7 +806,6 @@ export function ProfileEditor({
                 checked={draft.tools.proxyWatch}
                 onChange={(proxyWatch) => patchTools({ proxyWatch })}
                 label={t('ed.proxywatch')}
-                detail={t('ed.proxy.watch.hint')}
               />
               <Field label={t('ed.watchinterval')}>
                 <select

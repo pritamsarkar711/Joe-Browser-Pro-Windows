@@ -24,6 +24,7 @@ export function keyOf(profile: Profile | null | undefined): string {
 export function prettyEngine(engine: string): string {
   if (!engine) return '';
   const known: Record<string, string> = {
+    joe: 'Joe Browser',
     chrome: 'Chrome',
     brave: 'Brave',
     chromium: 'Chromium',
@@ -107,10 +108,12 @@ export function assignKernel(available: InstalledKernel[], existing: Profile[]):
   }
 
   const usage = usageOf(existing);
-  const choice = leastUsed(ready, usage);
-  if (!choice) {
-    return { kernelId: '', reason: 'No usable browser build was found.' };
-  }
+  const counts = ready.map((build) => usage.get(build.id.toLowerCase()) ?? 0);
+  const minUse = Math.min(...counts);
+  // Tie-break by the number of profiles already here. Picking "newest" on every tie is what made
+  // a batch of profiles land on the same version even when several builds were installed.
+  const tied = ready.filter((_build, index) => counts[index] === minUse);
+  const choice = { build: tied[existing.length % tied.length]!, use: minUse };
 
   const shared = choice.use;
   return {

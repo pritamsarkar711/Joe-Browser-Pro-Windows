@@ -234,6 +234,8 @@ export function buildIdentity(
 
 export function brandNameFor(engine: string): string {
   switch (engine) {
+    case 'joe':
+      return 'Joe Browser';
     case 'edge':
       return 'Microsoft Edge';
     case 'brave':

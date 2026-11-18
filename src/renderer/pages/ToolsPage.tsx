@@ -172,7 +172,6 @@ export function ToolsPage({
 
       <div className="content">
         <div className="content-inner tools-content">
-          <div className="section-label">{t('tools.title')}</div>
           <div className="tiles">
             {tile('layers', t('tools.batch'), t('tools.batch.hint'), () => subscription.tier === 'free' ? setActivateOpen(true) : setBatching(true))}
             {tile('download', t('tools.import'), t('tools.import.hint'), async () => {
@@ -433,7 +432,7 @@ export function ToolsPage({
           }
         >
           {audit.findings.length === 0 ? (
-            <EmptyState icon="check" title={t('audit.clean')} body={t('audit.clean.body')} />
+            <EmptyState icon="check" title={t('audit.clean')} body="" />
           ) : (
             <div className="stack">
               {audit.findings.map((finding, index) => (

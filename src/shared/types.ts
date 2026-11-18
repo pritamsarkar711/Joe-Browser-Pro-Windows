@@ -776,5 +776,9 @@ export const FONT_SETS = [
   { id: 'android', label: 'Android' },
   { id: 'minimal', label: 'Minimal' },
 ] as const;
+/** Joe Browser is an app-owned engine built on app-managed Chromium builds. */
+export const JOE_ENGINE = 'joe';
 export const THE_FINGERPRINT_TEST_URL = 'https://browsercan.net';
+/** The page a new profile opens on. Kept separate from the fingerprint test target. */
+export const DEFAULT_START_PAGE = 'https://browsercan.net?utm_source=chatgpt.com';
 export const TELEGRAM_USER = 'joegoldberg2025';

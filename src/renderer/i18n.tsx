@@ -58,11 +58,14 @@ export function I18nProvider({
 
     return {
       t: (key, fallback) => {
-        const value = table[key] ?? translate(key, def.key);
+        // A blank cell in a translation table means "not translated yet", not "show nothing".
+        // `??` would treat '' as a real value and print the dotted key, so the English table is
+        // consulted before the key is ever shown.
+        const value = table[key] || translate(key, def.key);
         return value || fallback || key;
       },
       f: (key, values, fallback) => {
-        const template = table[key] ?? translate(key, def.key) ?? fallback ?? key;
+        const template = table[key] || translate(key, def.key) || fallback || key;
         return template.replace(/\{(\w+)\}/g, (_match, name: string) =>
           String(values[name] ?? `{${name}}`),
         );

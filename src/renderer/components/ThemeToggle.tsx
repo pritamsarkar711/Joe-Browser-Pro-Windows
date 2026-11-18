@@ -1,5 +1,6 @@
 import { useCallback, type ReactNode } from 'react';
-import { DarkMode, LightMode } from '@mui/icons-material';
+import DarkMode from '@mui/icons-material/DarkMode';
+import LightMode from '@mui/icons-material/LightMode';
 
 /** Switch the application theme without reloading the workspace. */
 

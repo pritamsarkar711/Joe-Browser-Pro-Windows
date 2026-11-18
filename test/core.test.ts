@@ -82,6 +82,10 @@ test('the user agent, platform and brands agree with the claimed OS', () => {
   assert.match(firefox.userAgent, /Firefox\/141\.0/);
   // Firefox exposes no client hints; an empty list is the honest answer.
   assert.equal(firefox.brands.length, 0);
+
+  const joe = buildIdentity('joe', '157.0.8103.41', onWindows, 5);
+  assert.ok(joe.brands.some((b) => b.brand === 'Joe Browser'));
+  assert.ok(joe.fullVersionList.some((b) => b.brand === 'Joe Browser'));
 });
 
 test('a phone target produces a phone, not a desktop with a mobile string', () => {
@@ -128,10 +132,26 @@ test('the injected script parses as JavaScript and carries the overrides', () =>
   assert.match(script, /37445/); // UNMASKED_VENDOR_WEBGL
   assert.match(script, /getTimezoneOffset/);
   assert.match(script, /cdc_/);
+  // Audio offsets must be indexed from a seeded table, not from an advancing random stream:
+  // two reads of the same analyser have to agree, just as two canvas reads do.
+  assert.match(script, /audioNoiseTable/);
+  // Scoped to the audio patch: performance.now legitimately uses the random stream for jitter,
+  // while the audio reader must not consume it at all.
+  const audioStart = script.indexOf('var audioNoiseTable');
+  const audioEnd = script.indexOf('/* ----', audioStart);
+  assert.ok(audioStart > 0 && audioEnd > audioStart, 'the audio patch is missing its markers');
+  assert.doesNotMatch(script.slice(audioStart, audioEnd), /rnd\(\)/);
 
   // The originals live in a closure: the host's real graphics card must not be reachable by
   // walking own properties on window, which an earlier design leaked through a named key.
   assert.doesNotMatch(script, /__jbReal/);
+});
+
+test('the stored brand agrees with the engine and the device target', () => {
+  assert.equal(generateFingerprint({ seed: 5, engine: 'brave', os: 'Windows 11' }).brand, 'Brave');
+  assert.equal(generateFingerprint({ seed: 5, engine: 'edge', os: 'Windows 11' }).brand, 'Microsoft Edge');
+  assert.equal(generateFingerprint({ seed: 5, engine: 'firefox', os: 'Windows 11' }).brand, 'Mozilla Firefox');
+  assert.equal(generateFingerprint({ seed: 5, os: 'iPad' }).brand, 'Safari');
 });
 
 test('proxy lines are accepted in the shapes sellers actually paste', () => {
@@ -462,6 +482,18 @@ test('builds are spread across the profiles that already use them', () => {
   const result = diversity.assignKernel(available, existing as never);
   // The unused build wins, so a fresh profile does not pile onto the popular one.
   assert.equal(result.kernelId, 'chrome-140.0.7339.80');
+});
+
+test('equal-usage builds rotate instead of always choosing the newest', () => {
+  const available = [
+    kernel('chrome-141.0.7390.54', 'chrome', '141.0.7390.54'),
+    kernel('chrome-140.0.7339.80', 'chrome', '140.0.7339.80'),
+    kernel('joe-139.0.7258.66', 'joe', '139.0.7258.66'),
+  ];
+  const first = diversity.assignKernel(available, []).kernelId;
+  const second = diversity.assignKernel(available, [{ kernelId: first }] as never).kernelId;
+  const third = diversity.assignKernel(available, [{ kernelId: first }, { kernelId: second }] as never).kernelId;
+  assert.equal(new Set([first, second, third]).size, 3);
 });
 
 test('a duplicate never lands on the build its source is using', () => {
@@ -911,6 +943,20 @@ test('country names follow the bundled flag code across countries and reject unk
   assert.equal(countryCode('zz'), '');
 });
 
+test('country names resolve to the same code used by their circular flag', async () => {
+  const { countryCodeFromName, countryName } = await import('../src/shared/countries');
+  assert.equal(countryCodeFromName('Germany'), 'DE');
+  assert.equal(countryCodeFromName('United Kingdom'), 'GB');
+  assert.equal(countryCodeFromName('United States'), 'US');
+  assert.equal(countryCodeFromName('USA'), 'US');
+  assert.equal(countryCodeFromName('UK'), 'GB');
+  assert.equal(countryCodeFromName('Russian Federation'), 'RU');
+  assert.equal(countryCodeFromName('de'), 'DE');
+  assert.equal(countryCodeFromName(''), '');
+  assert.equal(countryCodeFromName('Atlantis'), '');
+  assert.equal(countryName(countryCodeFromName('Germany')), 'Germany');
+});
+
 test('history retains previous sessions and marks redirects without duplicating them', () => {
   const profile = store.createProfile({ name: 'History persistence' });
   const dir = path.join(scratch, 'history');
@@ -964,7 +1010,7 @@ test('CDP event listeners are active before auto-attach can pause a target', asy
 test('new profiles honor the configured start page and preserve explicit URLs', () => {
   const before = store.getSettings().startPage;
   try {
-    assert.equal(store.DEFAULT_SETTINGS.startPage, 'https://browsercan.net');
+    assert.equal(store.DEFAULT_SETTINGS.startPage, 'https://browsercan.net?utm_source=chatgpt.com');
     store.saveSettings({ startPage: 'https://start.example/' });
     assert.equal(store.draftProfile({ name: 'Default start' }).startUrl, 'https://start.example/');
     assert.equal(store.draftProfile({ name: 'Custom start', startUrl: 'https://custom.example/' }).startUrl, 'https://custom.example/');

@@ -1,5 +1,6 @@
 import { _electron as electron } from 'playwright-core';
 import { mkdtemp, rm, access } from 'node:fs/promises';
+import { writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -14,6 +15,18 @@ const data = path.join(root, 'workspace');
 const executablePath = path.join(destination, 'Joe Browser.exe');
 let app;
 const errors = [];
+
+/**
+ * NSIS needs its `/D=` argument last and unquoted, and Node quotes arguments containing spaces.
+ * A generated command file is the only way to keep both the custom folder (with a space) and the
+ * exact command line NSIS expects.
+ */
+function runCommandFile(name, command) {
+  const file = path.join(root, name);
+  writeFileSync(file, `@echo off\r\n${command}\r\nexit /b %ERRORLEVEL%\r\n`, 'utf8');
+  // Node refuses to spawn a .cmd directly; cmd.exe is the interpreter it is meant for.
+  execFileSync(process.env.ComSpec ?? 'cmd.exe', ['/d', '/c', file], { timeout: 180000, stdio: 'inherit' });
+}
 async function launch() {
   app = await electron.launch({ executablePath, env: { ...process.env, JOE_BROWSER_DATA_DIR: data }, timeout: 60000 });
   const page = await app.firstWindow();
@@ -29,8 +42,10 @@ async function accountGate(page) {
 
 try {
   console.log('Installing to', destination);
-  // NSIS /D must be the final argument and must not be quoted, even with spaces.
-  execFileSync(path.resolve('release/JoeBrowserSetup.exe'), ['/S', '/allusers', `/D=${destination}`], { timeout: 120000 });
+  // A per-user install is what the product offers by default; running this test as an
+  // administrator would hide failures that only happen without elevation. This NSIS build
+  // accepts a quoted /D value and needs it to keep a folder name with spaces intact.
+  runCommandFile('install.cmd', `"${path.resolve('release/JoeBrowserSetup.exe')}" /S /currentuser /D="${destination}"`);
   await access(executablePath);
   console.log('Launching installed application');
   let page = await launch();
@@ -84,7 +99,7 @@ try {
   await page.locator('.header').getByRole('button', { name: 'New profile' }).click();
   const editor = page.getByRole('dialog', { name: 'New profile' });
   await editor.waitFor();
-  await editor.locator('input[value="https://browsercan.net"]').waitFor();
+  await editor.locator('input[value="https://browsercan.net?utm_source=chatgpt.com"]').waitFor();
   assert.equal(await editor.getByText('Group / folder', { exact: true }).count(), 0);
   assert.equal(await editor.getByText('Tags', { exact: true }).count(), 0);
   for (const width of [1100, 520]) {
@@ -117,8 +132,9 @@ try {
   await app.close(); app = null;
   const uninstaller = path.join(destination, 'Uninstall Joe Browser.exe');
   await access(uninstaller);
-  // _?= runs the uninstaller in place so the process waits for uninstall to finish.
-  execFileSync(uninstaller, ['/S', `_?=${destination}`], { timeout: 120000 });
+  // _?= runs the uninstaller in place so the process waits for uninstall to finish, and it has
+  // the same last-argument and no-quotes requirement as /D.
+  runCommandFile('uninstall.cmd', `"${uninstaller}" /S _?=${destination}`);
   // Uninstall must preserve user data.
   await access(data);
   await access(path.join(data, 'profiles'));

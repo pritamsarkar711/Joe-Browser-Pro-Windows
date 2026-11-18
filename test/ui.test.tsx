@@ -76,7 +76,7 @@ const { AboutPage } = await import('../src/renderer/pages/AboutPage');
 const { LeakModal } = await import('../src/renderer/pages/LeakModal');
 const { BatchCreateModal } = await import('../src/renderer/pages/BatchCreateModal');
 const { mockBridge } = await import('../src/renderer/bridge');
-const { I18nProvider } = await import('../src/renderer/i18n');
+const { I18nProvider, useI18n } = await import('../src/renderer/i18n');
 const { ToastProvider } = await import('../src/renderer/components/UI');
 const { ENGLISH_TABLE, allKeys, coverageOf } = await import('../src/shared/i18n');
 const { encodeQr, qrPath } = await import('../src/shared/qr');
@@ -247,6 +247,21 @@ test.after(() => {
 });
 
 /* ------------------------------------------------------------------ the shell */
+
+/** A component that asks the translation layer for keys that are blank in some languages. */
+function LanguageProbe(): React.ReactElement {
+  const { t } = useI18n();
+  return React.createElement('span', null, `${t('history.open')}|${t('history.open.hint')}`);
+}
+
+test('a blank translation falls back to English instead of a dotted key', async () => {
+  reset();
+  await render(React.createElement(I18nProvider, { language: 'de' }, React.createElement(LanguageProbe)));
+
+  const body = text();
+  assert.match(body, /Open in the profile/, 'the English label did not fill the blank translation');
+  assert.ok(!body.includes('history.open'), 'a raw translation key reached the window');
+});
 
 test('the window mounts and paints the profile list', async () => {
   signIn();
@@ -915,6 +930,20 @@ test('profiles show the detected country flag and the selected browser mark', as
   } finally { mockBridge.getProfileLocation = original; await teardown(); }
 });
 
+test('a German proxy profile shows the German flag, not the British one', async () => {
+  signIn(); reset();
+  const settings = await mockBridge.getSettings();
+  const profiles = await mockBridge.listProfiles();
+  const berlin = profiles.find((profile) => profile.name === 'Client - Berlin')!;
+  await render(hosted(React.createElement(ProfilesPage, { profiles: [berlin], runningById: new Map(), settings, saveSettings: async () => settings, refresh: async () => undefined, toast: { toast: () => undefined } as never })));
+  const card = container.querySelector('[data-profile-card]')!;
+  assert.ok(card.querySelector('.fi-de.fis'), 'Germany must render the German flag');
+  assert.ok(!card.querySelector('.fi-gb'), 'Germany must never render the British flag');
+  assert.ok(card.textContent?.includes('Germany'));
+  assert.deepEqual(problems, []);
+  await teardown();
+});
+
 test('settings navigation keeps essential controls and never displays language percentages', async () => {
   signIn(); reset();
   const settings = await mockBridge.getSettings();
@@ -993,6 +1022,18 @@ test('restoring settings does not flash dark over the early light theme', async 
     assert.equal(win.document.documentElement.dataset.theme, 'light');
     assert.deepEqual(problems, []);
   } finally { mockBridge.getSettings = originalGet; await teardown(); }
+});
+
+test('the preview rolls a fresh, device-appropriate fingerprint on draft', async () => {
+  const profiles = await mockBridge.listProfiles();
+  const profile = (await mockBridge.getProfile(profiles[0]!.id))!;
+  const rolled = await mockBridge.draftProfile({
+    ...profile,
+    fingerprint: { ...profile.fingerprint, os: 'iPhone' },
+  });
+  assert.notEqual(rolled.fingerprint.seed, profile.fingerprint.seed);
+  assert.equal(rolled.fingerprint.os, 'iPhone');
+  assert.notEqual(rolled.fingerprint.webGlRenderer, profile.fingerprint.webGlRenderer);
 });
 
 test('profile editor removes group and tags and applies fresh device fingerprints', async () => {

@@ -83,6 +83,7 @@ import * as history from './core/history';
 import { testDirect, testProxy, parseProxyLine } from './core/proxy';
 import {
   deleteEntry,
+  findEntry,
   importLines,
   listEntries,
   networkReport,
@@ -551,12 +552,34 @@ export function registerIpc(context: IpcContext): void {
   // because buying a proxy list means finding out which lines answer before storing any.
   handle<ProxyBatchRow[]>('proxy:testLines', (text: string) => testProxyLines(String(text ?? '')));
 
-  handle<Profile>('proxy:createProfile', (id: string) => {
-    const entry = listEntries().find((row) => row.id === id);
-    if (!entry) throw new Error('That proxy is no longer in the library.');
+  handle<Profile>('proxy:createProfile', async (id: string) => {
+    const found = listEntries().find((row) => row.id === id);
+    if (!found) throw new Error('That proxy is no longer in the library.');
+    // A profile made from a proxy must carry the proxy's real exit country, not a guess from its
+    // name. If the entry has never been checked, check it now so the flag and the fingerprint's
+    // locale agree with the address the profile will actually use.
+    let entry = found;
+    if (!entry.lastCountryCode) {
+      try {
+        await testEntry(id);
+        // Re-read the stored row: the renderer-safe copy has no ciphertext, and the profile
+        // still needs the credential that was saved with the proxy.
+        entry = findEntry(id) ?? entry;
+      } catch {
+        // An unreachable proxy still produces a profile; it simply has no country to display.
+      }
+    }
     const created = createProfile({
       name: entry.name || `${entry.config.host}:${entry.config.port}`,
-      proxy: { ...entry.config, password: passwordOf(entry) } as ProxyConfig,
+      proxy: {
+        ...entry.config,
+        lastIp: entry.lastIp,
+        lastCountry: entry.lastCountry,
+        lastCountryCode: entry.lastCountryCode,
+        lastCity: entry.lastCity,
+        lastTimezone: entry.lastTimezone,
+        password: passwordOf(entry),
+      } as ProxyConfig,
     });
     changed();
     return created;

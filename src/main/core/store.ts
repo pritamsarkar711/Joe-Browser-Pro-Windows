@@ -9,7 +9,7 @@ import type {
   SortMode,
   ToolConfig,
 } from '../../shared/types';
-import { THE_FINGERPRINT_TEST_URL } from '../../shared/types';
+import { DEFAULT_START_PAGE, JOE_ENGINE } from '../../shared/types';
 import { Paths } from './paths';
 import { readJson, writeJson, writeJsonDelayed, flushPending } from './atomic';
 import { normalizeProxy, proxyDetail, proxyEnabled, proxyLabel } from './proxy';
@@ -43,7 +43,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   language: 'en',
   defaultEngine: 'auto',
   defaultKernelId: '',
-  startPage: THE_FINGERPRINT_TEST_URL,
+  startPage: DEFAULT_START_PAGE,
   extensionsEnabled: true,
   customExtensionsEnabled: true,
   clearCacheOnExit: false,
@@ -259,7 +259,12 @@ export function draftProfile(input: CreateProfileInput): Profile {
     openCount: 0,
     fingerprint,
     proxy,
-    tools: { ...defaultTools(), ...(input.tools ?? {}) },
+    tools: {
+      ...defaultTools(),
+      // Joe Browser's built-in tools are part of the browser, not optional add-ons.
+      ...(engineFor(input) === JOE_ENGINE ? { humanPaste: true, proxyWatch: true } : {}),
+      ...(input.tools ?? {}),
+    },
     flags: {},
   });
 

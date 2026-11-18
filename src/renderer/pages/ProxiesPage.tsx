@@ -57,6 +57,7 @@ export function ProxiesPage({
   const [batchTesting, setBatchTesting] = useState(false);
   const [testing, setTesting] = useState<Set<string>>(new Set());
   const [testingAll, setTestingAll] = useState(false);
+  const [creatingFrom, setCreatingFrom] = useState('');
   const [network, setNetwork] = useState<NetworkReport | null>(null);
   const diagnosticsSequence = useRef(0);
   const [loadingNetwork, setLoadingNetwork] = useState(false);
@@ -131,12 +132,15 @@ export function ProxiesPage({
 
   const createProfile = async (entry: ProxyEntry) => {
     if (subscription.tier === 'free' && profiles.length >= FREE_PROFILE_LIMIT) { setActivateOpen(true); return; }
+    setCreatingFrom(entry.id);
     try {
       const created = await bridge().createProfileFromProxy(entry.id);
       await refreshProfiles();
       toast.success(t('proxy.use'), created.name);
     } catch (error) {
       toast.error(t('err.generic'), messageOf(error));
+    } finally {
+      setCreatingFrom('');
     }
   };
 
@@ -291,7 +295,7 @@ export function ProxiesPage({
                       <Button size="sm" variant="soft" icon="speed" onClick={() => void test(entry)} busy={busy}>
                         {t('btn.test')}
                       </Button>
-                      <Button size="sm" variant="ghost" icon="plus" onClick={() => void createProfile(entry)} title={t('proxy.use')} />
+                      <Button size="sm" variant="ghost" icon="plus" onClick={() => void createProfile(entry)} title={t('proxy.use')} busy={creatingFrom === entry.id} />
                       <Button size="sm" variant="ghost" icon="wifi" onClick={() => void diagnostics(entry)} title={t('net.title')} />
                       <Menu
                         actions={[
@@ -594,7 +598,7 @@ function ProxyEditor({
             />
           </Field>
 
-          <Field label={t('ed.host')} hint="Paste a proxy with Ctrl+B or Ctrl+V">
+          <Field label={t('ed.host')}>
             <input className="input mono" value={host} onChange={(event) => setHost(event.target.value)} onKeyDown={(event) => {
               if (!event.ctrlKey || event.altKey || event.metaKey || event.shiftKey || event.key.toLowerCase() !== 'b') return;
               event.preventDefault(); event.stopPropagation();

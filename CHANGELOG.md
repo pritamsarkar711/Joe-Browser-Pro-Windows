@@ -1,5 +1,27 @@
 # Changelog
 
+## 2.3.0
+
+- Add Joe Browser as its own selectable engine: a branded app-window browser built on the same
+  verified Chromium archives, with a local start page and built-in Paste as Human, proxy alerts
+  and IP-change notices.
+- Manage Joe Browser builds from the Browsers page alongside Chrome, Chromium, Firefox and Brave;
+  versions and channels use the existing download, integrity and removal flow.
+- Spread new profiles across equally-used builds instead of always choosing the newest.
+- Fix country flags everywhere by deriving the code from the proxy's real exit country; unknown
+  countries show a globe rather than a guessed flag.
+- Make New Fingerprint and Random Identity roll a fresh, coherent Windows/macOS/Linux/Android/
+  iPhone/iPad identity, including in the browser preview.
+- Keep audio fingerprints stable across repeated reads by using a seeded noise table.
+- Fill untranslated labels from English instead of showing raw dotted keys.
+- Remove the full-icon-barrel imports that made every window load the entire Material icon set.
+- Simplify the profile editor, proxy tools and browser surfaces; keep layouts usable at narrow
+  window sizes.
+- Correct the stored browser brand for Firefox and the device target, and keep the Chromium
+  catalog cache from dropping Brave builds after a schema upgrade.
+- Stop detected system browsers from becoming a default engine that has no managed build; Edge
+  remains detection-only and Safari has no Windows build.
+
 ## 2.2.0
 
 - Add Joe Browser accounts with cloud sign-in and registration (7-day trial on the first sign-in),

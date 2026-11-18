@@ -5,6 +5,7 @@ import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import type { CookieRecord, SessionInfo } from '../../shared/types';
 import type { Profile } from '../../shared/types';
+import { JOE_ENGINE } from '../../shared/types';
 import { Paths } from './paths';
 import { CdpClient, delay } from './cdp';
 import { buildFingerprintScript } from './inject';
@@ -35,6 +36,44 @@ import { buildIdentity } from './ua';
 
 export interface SessionOptions {
   onToast?: (message: string, detail: string, nativeOnly?: boolean) => void;
+}
+
+/**
+ * Joe Browser opens in Chromium's app window mode: a standalone, chrome-less window instead of a
+ * tabbed browser. Its own start page is generated here so the window has a distinct identity and
+ * the app's built-in tools are one click away. The page is local, so it works offline.
+ */
+function joeStartPage(startUrl: string): string {
+  const file = Paths.storeFile('joe-start.html');
+  const escape = (value: string): string => value.replace(/[&<>"']/g, (char) => (
+    char === '&' ? '&amp;' : char === '<' ? '&lt;' : char === '>' ? '&gt;' : char === '"' ? '&quot;' : '&#39;'
+  ));
+  const home = escape(startUrl || 'https://browsercan.net?utm_source=chatgpt.com');
+  const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Joe Browser</title>
+<style>
+:root{color-scheme:dark;--bg:#0e1014;--panel:#181c23;--line:#2a303b;--text:#eef1f6;--muted:#98a2b3;--accent:#4b86f0}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;background:var(--bg);color:var(--text);font-family:'IBM Plex Sans',Segoe UI,system-ui,sans-serif;display:grid;place-items:center}
+main{width:min(720px,90vw);padding:48px 0}.brand{display:flex;align-items:center;gap:12px;justify-content:center;margin-bottom:8px}.brand strong{font-size:26px;letter-spacing:-.02em}
+p{color:var(--muted);text-align:center;margin:0 0 28px;font-size:14px}
+form{display:flex;gap:8px;margin-bottom:24px}input{flex:1;min-width:0;padding:12px 14px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--text);font:inherit;outline:none}
+input:focus{border-color:var(--accent)}button{padding:12px 18px;border-radius:10px;border:0;background:var(--accent);color:#fff;font:600 14px 'IBM Plex Sans',Segoe UI,system-ui,sans-serif;cursor:pointer}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
+a{display:block;padding:16px;border:1px solid var(--line);border-radius:12px;background:var(--panel);color:var(--text);text-decoration:none;transition:border-color .15s}
+a:hover{border-color:var(--accent)}a b{display:block;font-size:14px}a span{display:block;color:var(--muted);font-size:12px;margin-top:4px}
+footer{text-align:center;color:var(--muted);font-size:12px;margin-top:28px}
+</style></head><body><main>
+<div class="brand"><svg viewBox="0 0 64 64" width="38" height="38" aria-hidden="true"><rect x="2" y="2" width="60" height="60" rx="10" fill="#2f6bde"/><path d="M43 15a21 21 0 1 0 6.4 5.3" fill="none" stroke="#fff" stroke-width="3.5" stroke-linecap="round"/><path d="M42 19v17.5a10 10 0 0 1-20 0" fill="none" stroke="#fff" stroke-width="4.5" stroke-linecap="round"/></svg><strong>Joe Browser</strong></div>
+<p>Your space on the web.</p>
+<form action="https://www.google.com/search" method="get"><input name="q" placeholder="Search the web" autofocus aria-label="Search"><button type="submit">Search</button></form>
+<div class="grid">
+<a href="${home}"><b>Start page</b><span>Open this profile's home</span></a>
+<a href="https://browsercan.net?utm_source=chatgpt.com"><b>Fingerprint check</b><span>See what this identity reports</span></a>
+<a href="https://iphey.com"><b>Connection check</b><span>See where this profile exits</span></a>
+</div><footer>Paste as human · Proxy alerts · IP change notices are built in.</footer>
+</main></body></html>`;
+  Paths.ensure(Paths.root);
+  fs.writeFileSync(file, html, 'utf8');
+  return `file:///${file.replace(/\\/g, '/').replace(/ /g, '%20')}`;
 }
 
 export class BrowserSession extends EventEmitter {
@@ -248,7 +287,7 @@ export class BrowserSession extends EventEmitter {
     args.push(...loadArgs(extensions));
 
     const url = startUrl || profile.startUrl || 'about:blank';
-    args.push(url);
+    args.push(profile.engine === JOE_ENGINE ? `--app=${joeStartPage(url)}` : url);
     return args;
   }
 

@@ -7,7 +7,8 @@ import {
   DialogTitle,
   CircularProgress,
 } from '@mui/material';
-import { CheckCircleOutlined, KeyOutlined } from '@mui/icons-material';
+import CheckCircleOutlined from '@mui/icons-material/CheckCircleOutlined';
+import KeyOutlined from '@mui/icons-material/KeyOutlined';
 import { cloud } from '../cloud/client';
 import { messageOf } from '../util';
 

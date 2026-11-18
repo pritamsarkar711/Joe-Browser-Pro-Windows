@@ -1,6 +1,10 @@
 import { languagesWithCoverage } from '../shared/i18n';
 import { parseProxyLine } from '../shared/parseProxy';
 import { INCLUDED_EXTENSIONS, RECOMMENDED_EXTENSIONS } from '../shared/extensionCatalog';
+import { countryCodeFromName, countryName } from '../shared/countries';
+import { GPUS_BY_TARGET, SCREENS_BY_TARGET, gpuPoolKey } from '../shared/devices';
+import { DEFAULT_START_PAGE } from '../shared/types';
+import type { DeviceTarget, FingerprintConfig } from '../shared/types';
 import type {
   AccountSummary,
   AppInfo,
@@ -172,7 +176,7 @@ const mockProfiles: Profile[] = SAMPLE.map((sample, index) => ({
   tags: sample.tags,
   notes: index === 0 ? 'Warm account, 3 weeks old.' : '',
   status: index === 4 ? 'warm' : 'idle',
-  startUrl: 'https://browsercan.net',
+  startUrl: DEFAULT_START_PAGE,
   createdAt: new Date(Date.now() - (index + 1) * 86_400_000 * 3).toISOString(),
   updatedAt: new Date().toISOString(),
   lastOpenedAt: index < 3 ? new Date(Date.now() - index * 3_600_000).toISOString() : '',
@@ -188,7 +192,7 @@ const mockProfiles: Profile[] = SAMPLE.map((sample, index) => ({
     host: sample.proxy?.host ?? '',
     port: sample.proxy?.port ?? 0,
     lastCountry: sample.proxy?.country ?? '',
-    lastCountryCode: sample.proxy ? 'GB' : '',
+    lastCountryCode: countryCodeFromName(sample.proxy?.country ?? ''),
     lastTimezone: sample.tz,
   },
   tools: {
@@ -283,7 +287,7 @@ const mockSettings: AppSettings = {
   language: 'en',
   defaultEngine: 'chrome',
   defaultKernelId: '',
-  startPage: 'https://browsercan.net',
+  startPage: DEFAULT_START_PAGE,
   extensionsEnabled: true,
   customExtensionsEnabled: true,
   clearCacheOnExit: false,
@@ -373,9 +377,9 @@ function check(): ProxyCheckResult {
   return {
     ok: true,
     ip: '194.35.12.8',
-    country: 'United Kingdom',
-    countryCode: 'GB',
-    city: 'London',
+    country: '',
+    countryCode: '',
+    city: '',
     timezone: 'Europe/London',
     latencyMs: 68,
     error: '',
@@ -386,18 +390,18 @@ function network(): NetworkReport {
   return {
     ok: true,
     ip: '194.35.12.8',
-    country: 'United Kingdom',
-    countryCode: 'GB',
-    city: 'London',
-    region: 'England',
+    country: '',
+    countryCode: '',
+    city: '',
+    region: '',
     timezone: 'Europe/London',
     isp: 'Contabo GmbH',
     resolverIp: '194.35.12.9',
-    resolverGeo: 'United Kingdom',
+    resolverGeo: '',
     latencyMs: 68,
     clockSkewSeconds: 0.4,
     sources: ['ipwho.is', 'ipapi.co'],
-    warnings: ['The DNS resolver answers from the same country as the exit address.'],
+    warnings: [],
     error: '',
   };
 }
@@ -471,10 +475,47 @@ function mockCodeOk(code: string): boolean {
 
 /* ------------------------------------------------------------------ the mock */
 
+/** A fresh, internally coherent identity for the browser preview's roll buttons. */
+function mockRollFingerprint(previous: FingerprintConfig, os?: string): FingerprintConfig {
+  const seed = (Math.floor(Math.random() * 0xffffffff) >>> 0) || 1;
+  const requested = os && os !== 'System default' ? os : previous.os;
+  const target = (requested === 'System default' ? 'Windows 11' : requested) as DeviceTarget;
+  let state = seed;
+  const next = () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let t = state;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  const screens = SCREENS_BY_TARGET[target] ?? SCREENS_BY_TARGET['Windows 11']!;
+  const screen = screens[Math.floor(next() * screens.length)]!;
+  const pool = GPUS_BY_TARGET[gpuPoolKey(target)];
+  const gpu = pool[Math.floor(next() * pool.length)]!;
+  const cores = [2, 4, 6, 8, 12, 16][Math.floor(next() * 6)]!;
+  const memory = [4, 8, 8, 8, 16][Math.floor(next() * 5)]!;
+  return {
+    ...previous,
+    seed,
+    os: target,
+    screenW: screen.w,
+    screenH: screen.h,
+    availW: screen.w,
+    availH: screen.h - (screen.dpr > 1 ? 78 : 40),
+    pixelRatio: screen.dpr,
+    cores,
+    memory,
+    webGlVendor: gpu.vendor,
+    webGlRenderer: gpu.renderer,
+    userAgent: '',
+    userAgentOverride: '',
+  };
+}
+
 export const mockBridge: Bridge = {
   async getAppInfo(): Promise<AppInfo> {
     return {
-      version: '2.2.0',
+      version: '2.3.0',
       electron: '33.2.0',
       chrome: '130.0.6723.91',
       platform: 'win32 x64',
@@ -521,7 +562,7 @@ export const mockBridge: Bridge = {
 
   async readLogTail(): Promise<string> {
     return [
-      '2026-11-17 09:14:02 info  Joe Browser 2.2.0 starting in roaming mode',
+      '2026-11-17 09:14:02 info  Joe Browser 2.3.0 starting in roaming mode',
       '2026-11-17 09:14:02 info  data folder: C:\\Users\\joe\\AppData\\Roaming\\JoeBrowser',
       '2026-11-17 09:14:03 info  loaded 6 profiles',
       '2026-11-17 09:14:05 info  launched "Shop UK" on chrome 130.0.6723.91 (pid 18444)',
@@ -532,7 +573,7 @@ export const mockBridge: Bridge = {
 
   async reportPayload(note: string): Promise<ReportPayload> {
     return {
-      summary: 'Joe Browser 2.2.0 · win32 x64',
+      summary: 'Joe Browser 2.3.0 · win32 x64',
       details: `profiles: 6\nrunning: 1\n${note}`,
       logTail: await mockBridge.readLogTail(),
       telegram: 'https://t.me/joegoldberg2025',
@@ -587,7 +628,11 @@ export const mockBridge: Bridge = {
     if (!profile) throw new Error('Profile not found');
     const summary = summarise(profile, false);
     const direct = profile.proxy.type === 'none';
-    return { key: summary.locationKey, ok: direct || !!profile.proxy.lastCountryCode, country: direct ? 'United Kingdom' : profile.proxy.lastCountry, countryCode: direct ? 'GB' : profile.proxy.lastCountryCode };
+    // A direct connection has no proxy exit to attribute. Never claim a country we did not detect,
+    // or a profile would show a flag that has nothing to do with its location.
+    return direct
+      ? { key: summary.locationKey, ok: false, country: '', countryCode: '' }
+      : { key: summary.locationKey, ok: !!profile.proxy.lastCountryCode, country: profile.proxy.lastCountry, countryCode: profile.proxy.lastCountryCode };
   },
 
   async getProfile(id: string): Promise<Profile | null> {
@@ -610,7 +655,12 @@ export const mockBridge: Bridge = {
 
   async draftProfile(input: Partial<Profile>): Promise<Profile> {
     const base = mockProfiles[0]!;
-    return { ...base, ...input, id: `draft-${Date.now()}`, name: input.name ?? 'New profile' } as Profile;
+    // The desktop rolls a fresh identity on draft. The preview has to do the same or the
+    // New fingerprint / Random identity buttons look alive while changing nothing.
+    const fingerprint = input.fingerprint
+      ? mockRollFingerprint(input.fingerprint, input.fingerprint.os)
+      : base.fingerprint;
+    return { ...base, ...input, fingerprint, id: `draft-${Date.now()}`, name: input.name ?? 'New profile' } as Profile;
   },
 
   async createProfile(input: Partial<Profile>): Promise<Profile> {
@@ -751,7 +801,7 @@ export const mockBridge: Bridge = {
 
   async listKernels(): Promise<KernelBuild[]> {
     const list: KernelBuild[] = [];
-    const engines = ['chrome', 'edge', 'brave'];
+    const engines = ['joe', 'chrome', 'chromium', 'brave', 'firefox'];
     for (const engine of engines) {
       for (const [index, version] of ['130.0.6723.91', '129.0.6668.100', '128.0.6613.137'].entries()) {
         list.push({
@@ -761,8 +811,8 @@ export const mockBridge: Bridge = {
           version,
           os: process_os(),
           downloadUrl: `https://example.invalid/${engine}/${version}`,
-          installed: engine === 'chrome' && index === 0,
-          path: engine === 'chrome' && index === 0 ? '/kernels/chrome-130' : '',
+          installed: (engine === 'chrome' || engine === 'joe') && index === 0,
+          path: (engine === 'chrome' || engine === 'joe') && index === 0 ? `/kernels/${engine}-130` : '',
           sizeBytes: 348_000_000,
         });
       }
@@ -772,7 +822,8 @@ export const mockBridge: Bridge = {
 
   async downloadKernel(id: string): Promise<InstalledKernel> {
     await delay(400);
-    return { id, engine: 'chrome', version: id.split('-')[1] ?? '', path: `/kernels/${id}`, exePath: '', installedAt: new Date().toISOString() };
+    const engine = id.split('-')[0] || 'chrome';
+    return { id, engine, version: id.split('-')[1] ?? '', path: `/kernels/${id}`, exePath: '', installedAt: new Date().toISOString() };
   },
 
   async removeKernel(): Promise<void> {
@@ -800,12 +851,19 @@ export const mockBridge: Bridge = {
   async checkProxy(config: ProxyConfig): Promise<ProxyCheckResult> {
     await delay(240);
     if (!config.host) throw new Error('Enter a host and a port.');
-    return { ...check(), ip: config.host, latencyMs: 60 + Math.round(Math.random() * 80) };
+    const code = config.lastCountryCode || countryCodeFromName(config.lastCountry);
+    return {
+      ...check(),
+      ip: config.host,
+      country: code ? countryName(code, config.lastCountry) : '',
+      countryCode: code,
+      latencyMs: 60 + Math.round(Math.random() * 80),
+    };
   },
 
   async checkDirect(): Promise<ProxyCheckResult> {
     await delay(200);
-    return { ...check(), ip: '82.14.33.9', country: 'United Kingdom', countryCode: 'GB', city: 'Leeds' };
+    return { ...check(), ip: '82.14.33.9', country: '', countryCode: '', city: '' };
   },
 
   async listProxies(): Promise<ProxyEntry[]> {

@@ -4,7 +4,7 @@ import type {
   ResolvedOs,
 } from '../../shared/types';
 import { Rng, hashString } from './rng';
-import { acceptLanguageFor, buildIdentity } from './ua';
+import { acceptLanguageFor, brandNameFor, buildIdentity } from './ua';
 import { BY_CODE, ZONES } from '../../shared/zones';
 import {
   GPUS_BY_TARGET,
@@ -198,7 +198,7 @@ function buildFromSeed(seed: number, options: GenerateOptions): FingerprintConfi
     hardwareNoise: true,
     userAgent: '',
     platform: resolved.platform,
-    brand: 'Google Chrome',
+    brand: isIosTarget(target) ? 'Safari' : engine === 'firefox' ? 'Mozilla Firefox' : brandNameFor(engine),
     userAgentOverride: '',
     browserVersion,
   };
@@ -208,7 +208,10 @@ function buildFromSeed(seed: number, options: GenerateOptions): FingerprintConfi
     ...base,
     userAgent: identity.userAgent,
     platform: identity.platform,
-    brand: identity.brands.find((b) => !b.brand.toLowerCase().includes('brand'))?.brand ?? 'Google Chrome',
+    // The brand stored on the profile is the engine's own name. Deriving it from the client-hint
+    // list picked whichever of Chromium/Chrome happened to come first after the GREASE entry,
+    // and an empty list (Firefox) fell through to Google Chrome.
+    brand: base.brand,
     androidVersion: isAndroidTarget(target) ? androidVersionFor(target, base) : 'auto',
     iosVersion: isIosTarget(target) ? iosVersionFor(target, base) : 'auto',
   };

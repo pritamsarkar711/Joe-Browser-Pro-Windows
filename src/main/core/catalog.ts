@@ -168,6 +168,24 @@ async function fetchChromiumBuilds(): Promise<KernelBuild[]> {
   return builds;
 }
 
+/**
+ * Joe Browser builds use the same published, verifiable Chromium archives as the Chromium entry.
+ * They are a separate engine entry because a Joe Browser profile gets its own window, branding and
+ * built-in tools - the archive is only the real engine underneath. Keeping the vendor URL means a
+ * Joe Browser download is signed and checksummed exactly like a Chromium one, with no mirror.
+ */
+function joeBuildsFromChromium(chromium: KernelBuild[]): KernelBuild[] {
+  return chromium
+    .filter((build) => build.engine === 'chromium' && build.channel === 'stable')
+    .slice(0, 4)
+    .map((build) => ({
+      ...build,
+      id: build.id.replace(/^chromium-/, 'joe-'),
+      engine: 'joe',
+      channel: 'stable',
+    }));
+}
+
 async function fetchFirefoxBuilds(): Promise<KernelBuild[]> {
   // Mozilla's stable Windows releases are installers, not ZIP archives; macOS releases
   // are DMGs. Neither format is supported by our extraction pipeline.
@@ -286,12 +304,14 @@ export function installedKernels(): InstalledKernel[] {
 
 export async function listKernels(forceRefresh = false): Promise<KernelBuild[]> {
   const cache = readJson<CacheShape>(CACHE_FILE(), { fetchedAt: 0, builds: [] });
-  const fresh = cache.schemaVersion === 2 && Date.now() - cache.fetchedAt < CACHE_TTL_MS;
+  const fresh = cache.schemaVersion === 3 && Date.now() - cache.fetchedAt < CACHE_TTL_MS;
 
   // Discard legacy entries with a fabricated archive URL, including old cached results.
   let builds = cache.builds.filter((build) =>
     (build.engine !== 'firefox' || (process.platform === 'linux' && build.channel !== 'dev')) &&
-    (cache.schemaVersion === 2 || build.engine !== 'brave'),
+    // Brave's real archive metadata arrived in schema 2. A version check, not equality: bumping
+    // the schema again must not filter Brave out of a cache that already holds valid builds.
+    ((cache.schemaVersion ?? 0) >= 2 || build.engine !== 'brave'),
   );
   const installed = installedIndex();
 
@@ -306,7 +326,12 @@ export async function listKernels(forceRefresh = false): Promise<KernelBuild[]> 
 
     if (gathered.length > 0) {
       builds = gathered;
-      writeJson(CACHE_FILE(), { schemaVersion: 2, fetchedAt: Date.now(), builds } satisfies CacheShape);
+    }
+    // Joe Browser is derived from the Chromium catalog, not fetched from it as a fourth vendor.
+    const withoutJoe = builds.filter((build) => build.engine !== 'joe');
+    builds = [...withoutJoe, ...joeBuildsFromChromium(withoutJoe)];
+    if (gathered.length > 0) {
+      writeJson(CACHE_FILE(), { schemaVersion: 3, fetchedAt: Date.now(), builds } satisfies CacheShape);
     } else if (builds.length === 0 && installed.size === 0) {
       throw new Error(
         'The browser catalog could not be reached. Check the connection and try again - ' +

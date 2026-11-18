@@ -91,7 +91,7 @@ export function HistoryPage({ profiles }: { profiles: ProfileSummary[] }): React
           <div className="sub">
             {activeProfile ? `${activeProfile.name} · ` : ''}
             {t('count.matching').replace('{n}', String(visible.length))}
-            {byProfile.length > 0 ? ` · ${byProfile.length} profiles` : ''}
+            {byProfile.length > 0 ? ` · ${t('count.profiles').replace('{n}', String(byProfile.length))}` : ''}
           </div>
         </div>
         <div className="header-actions">
@@ -177,7 +177,7 @@ export function HistoryPage({ profiles }: { profiles: ProfileSummary[] }): React
                         <Icon name="history" />
                       </div>
                       <div className="row-main">
-                        <div className="row-title">{row.profileName || profile?.name || 'Deleted profile'}</div>
+                        <div className="row-title">{row.profileName || profile?.name || t('history.deletedProfile')}</div>
                         <div className="row-sub">
                           {t('card.opened').replace('{when}', when(row.lastAt))}
                         </div>
