@@ -3416,8 +3416,6 @@ p {
 .profile-chips .chip { max-width: 100%; }
 @media (max-width: 760px) { .grid { grid-template-columns: minmax(0, 1fr); } .row .chip { max-width: 100%; } }
 
-.settings-content .spread { flex-wrap: wrap; gap: 10px; }
-.settings-content .spread > .grow { min-width: 0; overflow-wrap: anywhere; }
 .tools-content .spread { flex-wrap: wrap; gap: 8px; }
 .tools-content .spread .mono { overflow-wrap: anywhere; min-width: 0; }
 .browsers-content .row-title { flex-wrap: wrap; white-space: normal; }
