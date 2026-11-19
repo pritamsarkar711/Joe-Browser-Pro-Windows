@@ -55,7 +55,11 @@ async function verifyProfileLifecycle(): Promise<void> {
       }
       const context = connection.contexts()[0]!;
       const page = context.pages()[0] ?? await context.newPage();
-      await page.goto(origin, { timeout: 30_000 });
+      // The launcher sends the profile to its start page itself, once the fingerprint is in
+      // place, so the page is already navigating by the time it can be inspected. Navigating
+      // again here would race with that navigation and abort it.
+      await page.waitForURL((url) => url.toString().startsWith(origin), { timeout: 30_000 });
+      await page.waitForLoadState('load');
       assert.equal(await page.title(), 'Joe profile lifecycle');
       const actual = await page.evaluate(() => ({
         cookie: document.cookie,
