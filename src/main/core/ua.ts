@@ -234,6 +234,10 @@ export function buildIdentity(
 
 export function brandNameFor(engine: string): string {
   switch (engine) {
+    // Joe Browser is a Chromium rebrand, and that is the shape Brave has: the user agent keeps
+    // the "Chrome/" token and the brand list names the product instead of Google Chrome. A
+    // checker that reads the brand list sees Chromium plus one other brand, exactly as it sees
+    // on Brave, and nothing in the two contradicts the other.
     case 'joe':
       return 'Joe Browser';
     case 'edge':

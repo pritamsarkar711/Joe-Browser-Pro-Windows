@@ -20,6 +20,10 @@ const FATAL_SURFACES: (keyof ReturnType<typeof signature>)[] = [
   'timezone',
   'screen',
   'userAgent',
+  // The hardware pair belongs with the others: the same number of cores and the same amount of
+  // memory on the same screen is one machine, whichever way the profile was drawn.
+  'cores',
+  'memory',
 ];
 
 export function auditWorkspace(profiles: Profile[]): AuditReport {

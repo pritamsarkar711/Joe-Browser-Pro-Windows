@@ -1,7 +1,7 @@
 {
   "name": "joe-browser",
   "productName": "Joe Browser",
-  "version": "2.3.0",
+  "version": "2.4.0",
   "description": "Joe Browser - a local-first anti-detect browser workspace for Windows. Unlimited isolated profiles, a coherent fingerprint per profile, and per-profile proxies.",
   "author": {
     "name": "Joe Goldberg"

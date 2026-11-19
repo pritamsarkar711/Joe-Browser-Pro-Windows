@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { cloud, type CloudUser } from '../cloud/client';
 import { Logo } from '../components/Brand';
+import { Icon } from '../components/Icon';
 import { Banner, Button, Field, Segmented } from '../components/UI';
 import { messageOf } from '../util';
 
@@ -65,6 +66,30 @@ export function AccountGate({
               <div className="gate-brand-sub">Anti-detect workspace</div>
             </div>
           </div>
+
+          <ul className="gate-points">
+            <li>
+              <span className="gate-point-icon"><Icon name="fingerprint" size={16} /></span>
+              <span>
+                <b>One identity per profile</b>
+                <span>Canvas, WebGL, fonts and client hints agree with each other.</span>
+              </span>
+            </li>
+            <li>
+              <span className="gate-point-icon"><Icon name="browsers" size={16} /></span>
+              <span>
+                <b>Isolated by construction</b>
+                <span>Every profile keeps its own storage, cookies and proxy.</span>
+              </span>
+            </li>
+            <li>
+              <span className="gate-point-icon"><Icon name="lock" size={16} /></span>
+              <span>
+                <b>Browsers built in</b>
+                <span>Managed engines live inside the app, not in your system browser.</span>
+              </span>
+            </li>
+          </ul>
         </div>
       </div>
 
@@ -128,8 +153,6 @@ export function AccountGate({
               {busy ? 'Please wait…' : mode === 'register' ? 'Create account & start trial' : 'Sign in'}
             </Button>
           </form>
-
-
         </div>
       </div>
     </div>

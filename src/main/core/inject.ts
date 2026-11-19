@@ -75,8 +75,6 @@ export function buildFingerprintScript(payload: InjectPayload): string {
     isIos: Boolean(identity.iosVersion),
     iosVersion: identity.iosVersion || '',
     androidVersion: fp.androidVersion || 'auto',
-    hwConcurrencyJitter: fp.hardwareNoise ? fingerprintJitter(fp.seed, 'cores') : 0,
-    deviceMemoryJitter: fp.hardwareNoise ? fingerprintJitter(fp.seed, 'memory') : 0,
     pluginCount: fp.deviceType === 'desktop' ? 5 : 0,
     connection: connectionFor(fp.seed, identity.mobile),
     /* A phone reports a battery; a desktop that claims one is itself a signal. */
@@ -87,6 +85,9 @@ export function buildFingerprintScript(payload: InjectPayload): string {
     productSub: engine === 'firefox' ? '20100101' : '20030107',
     vendor: engine === 'firefox' ? '' : 'Google Inc.',
     vendorSub: '',
+    /* How much window chrome sits above the page: an app window has a title bar, a tabbed
+       window has a title bar, a tab strip and the toolbar. */
+    chromeHeight: engine === 'joe' ? 59 : 87,
     geo:
       fp.geoLat && fp.geoLng
         ? { lat: Number(fp.geoLat), lng: Number(fp.geoLng) }
@@ -194,8 +195,11 @@ try {
   accessor(screenProto, 'colorDepth', function(){ return C.screen.colorDepth; });
   accessor(screenProto, 'pixelDepth', function(){ return C.screen.colorDepth; });
   accessor(win, 'devicePixelRatio', function(){ return C.pixelRatio; });
-  accessor(win, 'outerWidth', function(){ return C.screen.width; });
-  accessor(win, 'outerHeight', function(){ return C.screen.height; });
+  /* The window is a real window of a real size, so the outer size has to be that window and not
+     the screen it sits on. A screen of 1920 and a window of 1600 is an ordinary unmaximised
+     window; a window that reports itself as 1920 wide while its content is 1600 wide is not. */
+  accessor(win, 'outerWidth', function(){ return win.innerWidth + 16; });
+  accessor(win, 'outerHeight', function(){ return win.innerHeight + C.chromeHeight; });
 } catch(e){}
 
 /* ---- clock and locale: these must agree with the proxy's country ---- */
@@ -231,15 +235,29 @@ try {
 
 /* ---- WebGL ---- */
 try {
+  /* VENDOR and RENDERER are the masked values every Chromium and WebKit build reports. Only
+     UNMASKED_VENDOR_WEBGL and UNMASKED_RENDERER_WEBGL carry the real adapter string. Answering
+     the masked pair with the unmasked string is a contradiction that reads as a broken adapter
+     - the "WebGL exception" most scanners print for a misconfigured spoof. */
+  var glParams = {};
+  if (!C.isIos) {
+    glParams[37445] = C.webglVendor;
+    glParams[37446] = C.webglRenderer;
+  }
+  glParams[7936] = 'WebKit';
+  glParams[7937] = 'WebKit WebGL';
+
+  /* The host adapter's vendor-specific extensions answer under a renderer string that claims a
+     different GPU family, which is a one-line mismatch scanners check. */
+  var claimedNv = /nvidia/i.test(String(C.webglVendor || '') + ' ' + String(C.webglRenderer || ''));
+
   function patchGl(proto){
     if (!proto || !proto.getParameter) return;
     var real = proto.getParameter;
     proto.getParameter = mask(function getParameter(parameter){
       try {
-        if (parameter === 37445) return C.webglVendor;
-        if (parameter === 37446) return C.webglRenderer;
-        if (parameter === 7936) return C.webglVendor;
-        if (parameter === 7937) return C.webglRenderer;
+        if (C.isIos && (parameter === 37445 || parameter === 37446)) return null;
+        if (Object.prototype.hasOwnProperty.call(glParams, parameter)) return glParams[parameter];
       } catch(e){}
       return real.call(this, parameter);
     });
@@ -247,26 +265,40 @@ try {
     if (realExt) {
       proto.getExtension = mask(function getExtension(name){
         var ext = realExt.call(this, name);
-        if (ext && name === 'WEBGL_debug_renderer_info') {
-          try {
-            var vendor = ext.UNMASKED_VENDOR_WEBGL;
-            var renderer = ext.UNMASKED_RENDERER_WEBGL;
-            var proxy = {};
-            Object.defineProperty(proxy, 'UNMASKED_VENDOR_WEBGL', { value: vendor });
-            Object.defineProperty(proxy, 'UNMASKED_RENDERER_WEBGL', { value: renderer });
-            var realParam = realExt.call(this, 'WEBGL_debug_renderer_info') && ext.getParameter;
-            void realParam;
-            return new Proxy(ext, {
-              get: function(target, key){
-                if (key === 'UNMASKED_VENDOR_WEBGL') return 37445;
-                if (key === 'UNMASKED_RENDERER_WEBGL') return 37446;
-                var value = target[key];
-                return typeof value === 'function' ? value.bind(target) : value;
-              }
-            });
-          } catch(e){ return ext; }
-        }
+        try {
+          var n = String(name || '').toLowerCase();
+          if (!claimedNv && n.indexOf('nv_') === 0) return null;
+          /* WebKit simply does not hand out the debug-renderer extension, so under a Safari
+             identity the extension itself goes away rather than answering with nulls. */
+          if (C.isIos && n === 'webgl_debug_renderer_info') return null;
+          /* A headless or software adapter answers this extension with its real SwiftShader
+             vendor even when getParameter has been replaced. Reporting nothing is what a
+             machine without the extension does. */
+          if (ext && n === 'webgl_debug_renderer_info') {
+            var softVendor = real.call(this, ext.UNMASKED_VENDOR_WEBGL);
+            var soft = String(softVendor).toLowerCase();
+            var softwareAdapter = soft.indexOf('swiftshader') >= 0 || soft.indexOf('llvmpipe') >= 0
+              || soft.indexOf('software') >= 0 || soft.indexOf('mesa offscreen') >= 0
+              || soft.indexOf('angle (google') >= 0 || soft.indexOf('angle (vulkan') >= 0;
+            if (softwareAdapter) {
+              return null;
+            }
+          }
+        } catch(e){}
         return ext;
+      });
+    }
+    var realSupported = proto.getSupportedExtensions;
+    if (realSupported && !claimedNv) {
+      proto.getSupportedExtensions = mask(function getSupportedExtensions(){
+        var list = realSupported.apply(this, arguments);
+        try {
+          var out = [];
+          for (var index = 0; index < list.length; index++) {
+            if (!/^NV_/i.test(String(list[index]))) out.push(list[index]);
+          }
+          return out;
+        } catch(e){ return list; }
       });
     }
   }
@@ -399,28 +431,117 @@ try {
     };
     PatchedOffline.prototype = RealOffline.prototype;
     win.OfflineAudioContext = mask(PatchedOffline);
+
+    /* The rendered audio is the audio fingerprint. A page renders an oscillator through a
+       compressor and sums the samples, and the sum is the value it reports - so without this
+       every profile on the machine answered the same number, and a checker that opens two of
+       them at once sees one machine. The samples are scaled rather than offset: a scale keeps
+       the signal's mean at zero, which an added constant would not, and the sum grows with the
+       buffer length exactly as it does on real hardware. The step is sized so that the
+       four-decimal value a checker prints moves by at least one step, and the count of steps is
+       large enough that a workspace of ordinary size does not run out of them. */
+    var audioScale = 1 + (((C.seed >>> 0) % 48) - 24) * 1e-6;
+    var realStartRendering = RealOffline.prototype.startRendering;
+    if (realStartRendering) {
+      RealOffline.prototype.startRendering = mask(function startRendering(){
+        var result = realStartRendering.apply(this, arguments);
+        if (!result || typeof result.then !== 'function') return result;
+        return result.then(function(buffer){
+          try {
+            if (!buffer || !buffer.getChannelData) return buffer;
+            for (var ch = 0; ch < buffer.numberOfChannels; ch++) {
+              var samples = buffer.getChannelData(ch);
+              if (!samples) continue;
+              for (var i = 0; i < samples.length; i++) samples[i] = samples[i] * audioScale;
+            }
+          } catch(e){}
+          return buffer;
+        });
+      });
+    }
   }
 } catch(e){}
 
-/* ---- font enumeration ---- */
+/* ---- the fonts a profile claims ---- */
+var claimedFonts = {};
+for (var cfi = 0; cfi < C.fonts.length; cfi++) claimedFonts[String(C.fonts[cfi]).toLowerCase()] = true;
+
+/* The platform the profile claims decides which family the browser falls back to. That family
+   is also really installed on every machine of the platform, so a width equal to the fallback's
+   means nothing for it and must not be read as a missing font. */
+var claimedPlatform = 'windows';
+if (C.isIos) claimedPlatform = 'ios';
+else if (C.isMobile) claimedPlatform = 'android';
+else if (C.platform === 'MacIntel') claimedPlatform = 'macos';
+else if (String(C.platform).indexOf('Linux') === 0) claimedPlatform = 'linux';
+var standardFamilies = {
+  windows: 'arial', macos: 'helvetica', linux: 'dejavu sans', ios: 'helvetica', android: 'roboto',
+};
+var standardFamily = standardFamilies[claimedPlatform] || 'arial';
+
+/* A stable number for a family, so every measurement of it in one profile lands on one value. */
+function familyHash(name){
+  var h = (C.seed >>> 0) ^ 0x9e3779b9;
+  var s = String(name);
+  for (var i = 0; i < s.length; i++) h = (Math.imul(h ^ s.charCodeAt(i), 2654435761) >>> 0);
+  return h >>> 0;
+}
+
+/* The font shorthand, split into the part before the family and the family itself. */
+function parseFont(font){
+  var s = String(font || '').trim();
+  var size = s.match(/(?:^|\\s)((?:\\d+(?:\\.\\d+)?(?:px|pt|em|rem|%|in|cm|mm|ex|ch|q|vh|vw|vmin|vmax)?)|xx-small|x-small|small|medium|large|x-large|xx-large|smaller|larger)(?:\\s*\\/\\s*[^\\s]+)?(?=\\s|$)/);
+  if (!size) return { head: '', size: '', family: s };
+  var start = size.index + size[0].indexOf(size[1]);
+  return {
+    head: s.slice(0, start),
+    size: s.slice(start, start + size[1].length),
+    family: s.slice(start + size[1].length).replace(/^\\s*(\\/\\s*[^\\s]+)?\\s*/, ''),
+  };
+}
+
+function firstFamily(list){
+  return String(list || '').split(',')[0].replace(/["']/g, '').trim().toLowerCase();
+}
+
+/* ---- font measurement has to agree with the claimed list ----
+   A font probe measures a family and compares it with the generic fallback: equal widths mean
+   the family is not installed. Leaving the machine's own widths in place would hand the checker
+   every font the host happens to have - the host would then be read straight out of the profile -
+   and a family the profile claims but the machine lacks measures exactly like the fallback, which
+   reads as a false claim. So a family the profile does not own measures as the fallback, and a
+   family it owns but the machine lacks is given a width of its own, the same every time. */
 try {
-  if (C.fontsNoise && win.CanvasRenderingContext2D) {
+  if (C.fontsNoise && C.fonts && C.fonts.length && win.CanvasRenderingContext2D) {
     var realMeasure = win.CanvasRenderingContext2D.prototype.measureText;
-    var fontWidths = {};
+
+    function genericWidth(ctx, text, parts){
+      var probe = (parts.head + parts.size + ' sans-serif').replace(/\\s+/g, ' ').trim();
+      var original = ctx.font;
+      try {
+        ctx.font = probe;
+        return realMeasure.call(ctx, text).width;
+      } catch(e){ return 0; }
+      finally { try { ctx.font = original; } catch(e){} }
+    }
+
     win.CanvasRenderingContext2D.prototype.measureText = mask(function measureText(text){
       var metrics = realMeasure.apply(this, arguments);
       try {
-        var font = String(this.font || '');
-        var base = fontWidths[font] || (fontWidths[font] = rnd() * 0.002);
-        var declared = false;
-        for (var i = 0; i < C.fonts.length; i++) {
-          if (font.toLowerCase().indexOf(C.fonts[i].toLowerCase()) >= 0) { declared = true; break; }
+        var parts = parseFont(this.font);
+        var family = firstFamily(parts.family);
+        if (!family) return metrics;
+        var generic = genericWidth(this, text, parts);
+        if (!claimedFonts[family]) {
+          /* The profile does not own this family, so the machine must not be seen to have it. */
+          Object.defineProperty(metrics, 'width', { configurable: true, value: generic });
+          return metrics;
         }
-        if (!declared) {
-          Object.defineProperty(metrics, 'width', {
-            configurable: true,
-            value: metrics.width * (1 + base)
-          });
+        if (family !== standardFamily && Math.abs(metrics.width - generic) <= 0.05) {
+          /* The profile claims it and the machine does not have it: it has to measure like a real
+             installed font, or the probe reports the family missing. */
+          var delta = 1 + ((familyHash(family) % 240) + 60) / 10000;
+          Object.defineProperty(metrics, 'width', { configurable: true, value: metrics.width * delta });
         }
       } catch(e){}
       return metrics;
@@ -492,15 +613,23 @@ try {
 
 /* ---- automation leftovers ---- */
 try {
-  for (var key in win) {
-    if (key.indexOf('cdc_') === 0 || key.indexOf('_cdc_') === 0 || key.indexOf('$cdc_') === 0) {
-      try { delete win[key]; } catch(e){}
+  /* Chrome defines its automation hooks as own properties of the document and the window, and
+     they are not enumerable: a for-in loop never sees them, which is why they survive every
+     other cleaner. The own-property list is the only place they can be found. */
+  function stripAutomationHooks(target){
+    var names = [];
+    try { names = Object.getOwnPropertyNames(target); } catch(e){ return; }
+    for (var i = 0; i < names.length; i++) {
+      var key = names[i];
+      if (key.indexOf('cdc_') >= 0 || key.indexOf('__webdriver') === 0 || key.indexOf('__driver') === 0
+        || key.indexOf('__$webdriverAsyncExecutor') === 0 || key === '$chrome_asyncScriptInfo'
+        || key === 'selenium' || key === '_Selenium_IDE_Recorder') {
+        try { delete target[key]; } catch(e){}
+      }
     }
   }
-  if (win.chrome && win.chrome.runtime && win.chrome.runtime.onConnect) {
-    var realRuntime = win.chrome.runtime.onConnect;
-    void realRuntime;
-  }
+  stripAutomationHooks(win);
+  stripAutomationHooks(win.document);
   delete win.__nightmare;
   delete win._phantom;
   delete win.callPhantom;
@@ -514,6 +643,12 @@ try {
       if (descriptor && descriptor.name === 'notifications') {
         return Promise.resolve({ state: Notification.permission, onchange: null });
       }
+      /* The position answer above is decided by the profile, so the permission has to agree
+         with it: a page that asks before it asks for coordinates must not be told "granted"
+         when the profile has no location to give. */
+      if (descriptor && descriptor.name === 'geolocation') {
+        return Promise.resolve({ state: C.geo ? 'granted' : 'denied', onchange: null });
+      }
       return realQuery(descriptor);
     });
   }
@@ -525,9 +660,10 @@ try {
   if (!C.isFirefox) {
     if (!win.chrome) { define(win, 'chrome', { value: {}, writable: true, enumerable: false, configurable: true }); }
     var chrome = win.chrome;
-    if (!chrome.runtime) {
-      define(chrome, 'runtime', { value: {}, writable: true, enumerable: false, configurable: true });
-    }
+    /* A page in the main world has no chrome.runtime: it belongs to extensions and to content
+       scripts, and a page that finds one there is looking for an extension or an automation
+       harness. An empty object is worse than nothing, because it is still a runtime. */
+    try { delete chrome.runtime; } catch(e){}
     if (!chrome.app) {
       define(chrome, 'app', {
         value: {
@@ -538,8 +674,10 @@ try {
         writable: true, enumerable: false, configurable: true
       });
     }
-    if (!chrome.csi) define(chrome, 'csi', { value: function csi(){ return {}; }, writable: true, enumerable: false, configurable: true });
-    if (!chrome.loadTimes) define(chrome, 'loadTimes', { value: function loadTimes(){ return {}; }, writable: true, enumerable: false, configurable: true });
+    /* Both of these answer with a shape, not with an empty object: a checker that calls
+       chrome.loadTimes() and reads requestTime expects a number. */
+    if (!chrome.csi) define(chrome, 'csi', { value: mask(function csi(){ return { onloadT: Date.now(), startE: Date.now(), pageT: 0, tran: 15 }; }), writable: true, enumerable: false, configurable: true });
+    if (!chrome.loadTimes) define(chrome, 'loadTimes', { value: mask(function loadTimes(){ return { requestTime: Date.now() / 1000, startLoadTime: Date.now() / 1000, commitLoadTime: Date.now() / 1000, finishDocumentLoadTime: Date.now() / 1000, finishLoadTime: Date.now() / 1000, firstPaintTime: Date.now() / 1000, firstPaintAfterLoadTime: 0, navigationType: 'Other' }; }), writable: true, enumerable: false, configurable: true });
   }
 } catch(e){}
 
@@ -671,30 +809,45 @@ try {
   }
 } catch(e){}
 
-/* ---- font probing by element width ----
-   The classic font test measures a span's offsetWidth against a fallback. A profile whose list
-   claims Calibri but whose box is the fallback width is caught here, so the measurement is made
-   to agree with the declared list. */
+/* ---- the box the font is measured in ----
+   The same rule as the canvas: a family the profile does not own has to measure as the generic
+   fallback, or the box gives the host's fonts away just as the canvas would. */
 try {
-  if (C.fonts && C.fonts.length) {
-    var ownFonts = {};
-    for (var fi = 0; fi < C.fonts.length; fi++) ownFonts[C.fonts[fi].toLowerCase()] = true;
+  if (C.fontsNoise && C.fonts && C.fonts.length) {
     var realOffsetWidth = getDesc(win.HTMLElement.prototype, 'offsetWidth');
     if (realOffsetWidth && realOffsetWidth.get) {
       var baseOffsetWidth = realOffsetWidth.get;
+      var domWidths = new WeakMap();
+
+      function domFallbackWidth(element, style){
+        try {
+          var text = element.textContent || '';
+          var key = style.fontSize + '|' + text;
+          var cached = domWidths.get(element);
+          if (cached && cached.key === key) return cached.width;
+          var ctx = win.document.createElement('canvas').getContext('2d');
+          ctx.font = [style.fontStyle, style.fontWeight, style.fontSize, 'sans-serif'].join(' ');
+          var width = Math.round(ctx.measureText(text).width);
+          domWidths.set(element, { key: key, width: width });
+          return width;
+        } catch(e){ return 0; }
+      }
+
       define(win.HTMLElement.prototype, 'offsetWidth', {
         get: function(){
           var width = baseOffsetWidth.call(this);
           try {
             var style = win.getComputedStyle(this);
-            var family = style && style.fontFamily ? style.fontFamily.split(',')[0].replace(/["']/g, '').trim().toLowerCase() : '';
-            if (family && !ownFonts[family]) {
-              /* A font the profile does not own measures as the generic fallback. */
-              return width;
+            var family = firstFamily(style && style.fontFamily);
+            if (!family) return width;
+            var fallback = domFallbackWidth(this, style);
+            if (!fallback) return width;
+            if (!claimedFonts[family]) return fallback;
+            if (family !== standardFamily && Math.abs(width - fallback) <= 1) {
+              /* Claimed by the profile, missing on the machine: the box needs a width of its own. */
+              return width + 1 + (familyHash(family) % 3);
             }
-            if (family && ownFonts[family]) {
-              return width + (this.textContent && this.textContent.length ? 0 : 0);
-            }
+            return width;
           } catch(e){}
           return width;
         },
@@ -702,6 +855,17 @@ try {
         enumerable: true
       });
     }
+  }
+} catch(e){}
+
+/* ---- the font API answers the same on every machine ----
+   document.fonts.check() is the probe a checker reaches for first. A real Chromium answers true
+   for a system family whether or not the machine has it, and the set itself is empty on a page
+   that loads no webfont - so the set is left alone and the answer is pinned to the behaviour a
+   real browser shows, instead of to the fonts the host happens to carry. */
+try {
+  if (win.document && win.document.fonts && win.document.fonts.check) {
+    win.document.fonts.check = mask(function check(font, text){ return true; });
   }
 } catch(e){}
 
@@ -736,14 +900,14 @@ try {
    A window narrower than the screen has an innerWidth of its own; what must not happen is
    innerWidth being wider than screen.width, which is what a resized-by-script window does. */
 try {
-  var realInnerWidth = getDesc(win, 'innerWidth');
-  void realInnerWidth;
+  /* The visual viewport is the part of the window the page can see. It is the window's own
+     width, not the screen's: a page that compares visualViewport.width with innerWidth and
+     with screen.width is looking for a window that claims to be wider than the screen. */
   if (win.VisualViewport && win.VisualViewport.prototype) {
     var vvProto = win.VisualViewport.prototype;
-    accessor(vvProto, 'width', function(){
-      var width = C.screen.width;
-      return Math.min(width, width);
-    });
+    accessor(vvProto, 'width', function(){ return win.innerWidth; });
+    accessor(vvProto, 'height', function(){ return win.innerHeight; });
+    accessor(vvProto, 'scale', function(){ return 1; });
   }
 } catch(e){}
 
@@ -782,10 +946,18 @@ try {
 
 /* ---- geolocation agreement ---- */
 try {
-  if (C.geo && win.navigator.geolocation) {
-    var realGeo = win.navigator.geolocation.getCurrentPosition.bind(win.navigator.geolocation);
-    void realGeo;
-    win.navigator.geolocation.getCurrentPosition = mask(function getCurrentPosition(success, failure){
+  if (win.navigator.geolocation) {
+    /* The claim and the answer have to be the same claim. A profile with no location must not
+       fall through to the real one: that would hand the page the machine's own position, and a
+       page that asked for the permission first would see "granted" next to coordinates that
+       belong to somewhere else entirely. */
+    win.navigator.geolocation.getCurrentPosition = mask(function getCurrentPosition(success, failure, options){
+      if (!C.geo) {
+        if (typeof failure === 'function') {
+          failure({ code: 1, message: 'User denied Geolocation', PERMISSION_DENIED: 1, POSITION_UNAVAILABLE: 2, TIMEOUT: 3 });
+        }
+        return;
+      }
       if (typeof success === 'function') {
         success({
           coords: {
@@ -800,23 +972,16 @@ try {
           timestamp: Date.now()
         });
       }
-      void failure;
+      void options;
+    });
+    win.navigator.geolocation.watchPosition = mask(function watchPosition(success, failure, options){
+      win.navigator.geolocation.getCurrentPosition(success, failure, options);
+      return 0;
     });
   }
 } catch(e){}
 
 })();`;
-}
-
-/**
- * A small stable offset for a named surface. Hardware counters that differ by one between two
- * profiles on the same machine are what a performance probe compares, so the offset has to be a
- * function of the seed and nothing else.
- */
-function fingerprintJitter(seed: number, salt: string): number {
-  let h = seed >>> 0;
-  for (let i = 0; i < salt.length; i++) h = (Math.imul(h ^ salt.charCodeAt(i), 2654435761) >>> 0);
-  return (h % 5) - 2;
 }
 
 function connectionFor(seed: number, mobile: boolean): Record<string, unknown> {
@@ -832,21 +997,33 @@ function connectionFor(seed: number, mobile: boolean): Record<string, unknown> {
 
 function voicesFor(fp: FingerprintConfig, mobile: boolean): { name: string; lang: string; local: boolean }[] {
   const base = fp.language;
-  if (mobile) {
-    return [
-      { name: 'Samantha', lang: base, local: true },
-      { name: 'Karen', lang: base, local: true },
-      { name: 'Daniel', lang: base, local: true },
-    ];
-  }
   const resolved = fp.resolvedOs;
+  // Apple voices only exist on Apple platforms, and Android phones never carry them. The
+  // voice list is derived from the claimed operating system, not from "is this a small
+  // screen": a phone claiming Android that answers with Samantha is as wrong as a desktop
+  // answering with a phone's voices.
   if (resolved === 'macOS 15' || resolved === 'macOS 14') {
+    if (mobile) {
+      return [
+        { name: 'Samantha', lang: base, local: true },
+        { name: 'Karen', lang: base, local: true },
+        { name: 'Daniel', lang: base, local: true },
+      ];
+    }
     return [
       { name: 'Alex', lang: base, local: true },
       { name: 'Samantha', lang: base, local: true },
       { name: 'Victoria', lang: base, local: true },
       { name: 'Fred', lang: base, local: true },
       { name: 'Google US English', lang: 'en-US', local: false },
+    ];
+  }
+  if (resolved === 'Linux' && mobile) {
+    // Android ships Google's text-to-speech voices, not Apple's and not Microsoft's.
+    return [
+      { name: 'Google US English', lang: 'en-US', local: true },
+      { name: 'Google UK English Female', lang: 'en-GB', local: true },
+      { name: 'Google UK English Male', lang: 'en-GB', local: true },
     ];
   }
   return [

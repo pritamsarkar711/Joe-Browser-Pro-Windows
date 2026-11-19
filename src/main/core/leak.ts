@@ -2,6 +2,7 @@ import type { LeakReport, LeakSurface, Profile } from '../../shared/types';
 import { buildIdentity } from './ua';
 import { fontsFor } from './fingerprint';
 import { proxyEnabled } from './proxy';
+import { compareVersions, installedKernels } from './catalog';
 
 /**
  * The fingerprint check.
@@ -17,9 +18,29 @@ import { proxyEnabled } from './proxy';
  * both, and they answer different questions.
  */
 
+/**
+ * The browser version the profile will actually run.
+ *
+ * A profile stores a version, but the build it launches may be a newer one - the pinned build
+ * is what counts. Auditing against the stored value would report a mismatch on every profile
+ * whose build was updated, which is a false alarm that trains the user to ignore the report.
+ */
+function runningVersion(profile: Profile): string {
+  try {
+    const installed = installedKernels().filter((build) => build.engine === profile.engine);
+    const chosen = profile.kernelId
+      ? installed.find((build) => build.id === profile.kernelId)
+      : [...installed].sort((a, b) => compareVersions(b.version, a.version))[0];
+    if (chosen) return chosen.runtimeVersion || chosen.version;
+  } catch {
+    /* no build is installed yet, so the stored value is the only one there is */
+  }
+  return profile.browserVersion;
+}
+
 export function buildLeakReport(profile: Profile): LeakReport {
   const fp = profile.fingerprint;
-  const identity = buildIdentity(profile.engine, profile.browserVersion, fp, fp.seed);
+  const identity = buildIdentity(profile.engine, runningVersion(profile), fp, fp.seed);
 
   const surfaces: LeakSurface[] = [
     surface('User agent', fp.userAgentOverride || identity.userAgent, identity.userAgent, 'declared'),
@@ -76,7 +97,7 @@ export function buildLeakReport(profile: Profile): LeakReport {
  */
 export function liveLeakReport(profile: Profile, probe: Record<string, unknown>): LeakReport {
   const fp = profile.fingerprint;
-  const identity = buildIdentity(profile.engine, profile.browserVersion, fp, fp.seed);
+  const identity = buildIdentity(profile.engine, runningVersion(profile), fp, fp.seed);
   const text = (value: unknown): string => (value === undefined || value === null ? '' : String(value));
 
   const screen = (probe['screen'] as Record<string, unknown> | undefined) ?? {};

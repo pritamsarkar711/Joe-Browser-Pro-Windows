@@ -424,3 +424,44 @@ test('Windows distribution is an assisted installer, never a portable app', () =
   }
   assert.doesNotMatch(read('README.md'), /download\/JoeBrowser\.exe/);
 });
+
+test('the app never looks for a browser installed on this PC', () => {
+  /*
+   * A profile has to run a browser the app owns. If any code path can reach the Chrome, Edge,
+   * Brave or Firefox the user already has, then a profile is running somebody else's binary with
+   * somebody else's version and somebody else's update schedule - and the fingerprint the app
+   * applied describes a machine that is not the one answering.
+   *
+   * So the rule is checked in the source rather than described in a comment: no path into a
+   * browser installed on this machine, and no way to launch one.
+   */
+  const sources = fs
+    .readdirSync(path.join(root, 'src'), { recursive: true, encoding: 'utf8' })
+    .filter((name) => name.endsWith('.ts') || name.endsWith('.tsx'))
+    .map((name) => ({ name, body: read(path.join('src', name)) }));
+
+  const forbidden: [RegExp, string][] = [
+    [/Google\\Chrome\\Application/i, 'the installed Chrome'],
+    [/Microsoft\\Edge\\Application/i, 'the installed Edge'],
+    [/BraveSoftware\\Brave-Browser/i, 'the installed Brave'],
+    [/Mozilla Firefox\\firefox\.exe/i, 'the installed Firefox'],
+    [/\/Applications\/Google Chrome\.app/i, 'the installed Chrome'],
+    [/\/Applications\/Firefox\.app/i, 'the installed Firefox'],
+    [/\/usr\/bin\/google-chrome/i, 'the installed Chrome'],
+    [/\/usr\/bin\/firefox/i, 'the installed Firefox'],
+    [/PROGRAMFILES/i, 'the installed-program directories'],
+  ];
+
+  const offenders: string[] = [];
+  for (const file of sources) {
+    for (const [pattern, what] of forbidden) {
+      if (pattern.test(file.body)) offenders.push(`${file.name} reaches for ${what}`);
+    }
+  }
+  assert.deepEqual(offenders, [], `the app must not touch locally installed browsers: ${offenders.join('; ')}`);
+
+  // And there is no bridge, channel or button left that offers one.
+  assert.doesNotMatch(types, /DetectedBrowser|detectInstalledBrowsers/);
+  assert.doesNotMatch(preload, /detectInstalledBrowsers|browsers:detect/);
+  assert.doesNotMatch(ipc, /detectInstalledBrowsers|browsers:detect/);
+});

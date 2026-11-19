@@ -8,3 +8,4 @@ Thumbs.db
 .arena/
 *.tsbuildinfo
 .test-build/
+scripts/fingerprint-script.js

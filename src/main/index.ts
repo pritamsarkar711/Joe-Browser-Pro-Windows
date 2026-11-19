@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, Notification, Tray, ipcMain, dialog, nativeImage, nativeTheme, shell } from 'electron';
+import { app, BrowserWindow, Menu, Notification, Tray, ipcMain, dialog, nativeImage, nativeTheme, screen, shell } from 'electron';
 import path from 'node:path';
 import { Paths } from './core/paths';
 import { registerIpc } from './ipc';
@@ -162,14 +162,37 @@ function buildTray(): void {
   tray.on('click', showWindow);
 }
 
+/**
+ * Where the window may actually sit.
+ *
+ * A saved size comes from a machine that may no longer exist: the screen it was chosen on might
+ * be gone, or smaller than the window. A window that is larger than the display, or that opens
+ * against an edge, reads as broken - so the size is capped to the work area and the window is
+ * placed in the middle of it.
+ */
+function fitToDisplay(width: number, height: number): { width: number; height: number; x: number; y: number } {
+  const display = screen.getPrimaryDisplay();
+  const area = display.workArea;
+  const maxWidth = Math.max(320, area.width);
+  const maxHeight = Math.max(400, area.height);
+  const w = Math.min(Math.max(width, 480), maxWidth);
+  const h = Math.min(Math.max(height, 540), maxHeight);
+  return {
+    width: Math.round(w),
+    height: Math.round(h),
+    x: Math.round(area.x + (area.width - w) / 2),
+    y: Math.round(area.y + (area.height - h) / 2),
+  };
+}
+
 function createWindow(): void {
   const settings = getSettings();
+  const bounds = fitToDisplay(settings.winWidth || 1320, settings.winHeight || 860);
 
   mainWindow = new BrowserWindow({
-    width: settings.winWidth || 1320,
-    height: settings.winHeight || 860,
-    minWidth: 480,
-    minHeight: 540,
+    ...bounds,
+    minWidth: Math.min(480, bounds.width),
+    minHeight: Math.min(540, bounds.height),
     show: false,
     icon: nativeImage.createFromDataURL(__TRAY_ICON__),
     backgroundColor: settings.theme === 'light' ? '#f6f7fa' : '#0e1014',
@@ -284,6 +307,25 @@ app.whenReady().then(() => {
 
   createWindow();
   buildTray();
+
+  // A window that was centred on a monitor which has since been unplugged must not stay in the
+  // space that monitor used to occupy.
+  const recentre = (): void => {
+    if (!mainWindow || mainWindow.isDestroyed() || mainWindow.isMaximized()) return;
+    const area = screen.getDisplayMatching(mainWindow.getBounds()).workArea;
+    const bounds = mainWindow.getBounds();
+    const width = Math.min(bounds.width, area.width);
+    const height = Math.min(bounds.height, area.height);
+    mainWindow.setBounds({
+      width,
+      height,
+      x: Math.round(area.x + (area.width - width) / 2),
+      y: Math.round(area.y + (area.height - height) / 2),
+    });
+  };
+  screen.on('display-metrics-changed', recentre);
+  screen.on('display-added', recentre);
+  screen.on('display-removed', recentre);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

@@ -18,7 +18,8 @@ import { testProxy } from './proxy';
 import { ProxyWatchState } from './proxyWatch';
 import * as history from './history';
 import { resolveManagedRuntime } from './runtime';
-import { buildIdentity } from './ua';
+import { buildIdentity, type Identity } from './ua';
+import { seedChromiumProfile } from './chromiumSeed';
 
 /**
  * Launching a profile.
@@ -85,6 +86,11 @@ export class BrowserSession extends EventEmitter {
   private relay: RelayHandle | null = null;
   private cdp: CdpClient | null = null;
   private injectScript = '';
+  private identity: Identity | null = null;
+  private acceptLanguage = '';
+  private pendingUrl = '';
+  private pendingAppPage = false;
+  private navigated = false;
   private stamped = new Set<string>();
   private closing = false;
   private watchTimer: NodeJS.Timeout | null = null;
@@ -137,6 +143,8 @@ export class BrowserSession extends EventEmitter {
       profile.fingerprint,
       profile.fingerprint.seed,
     );
+    this.identity = identity;
+    this.acceptLanguage = profile.fingerprint.acceptLanguage || profile.fingerprint.language;
 
     let proxyArg = '';
     if (proxyEnabled(profile.proxy)) {
@@ -211,9 +219,21 @@ export class BrowserSession extends EventEmitter {
       Paths.ensure(this.dataDir);
     }
 
+    // The folder is prepared before the browser starts, so it opens as an established profile:
+    // no "restore pages?" bubble, no default-browser bar, no What's New page.
+    if (!isFirefox) {
+      seedChromiumProfile(this.dataDir, target.version || profile.browserVersion);
+    }
+
     const args = isFirefox
       ? this.firefoxArgs(profile, proxyArg, startUrl)
-      : this.chromiumArgs(profile, identity.userAgent, proxyArg, startUrl, extensions);
+      : this.chromiumArgs(profile, identity.userAgent, proxyArg, extensions);
+
+    // Where the browser is sent once its fingerprint is in place. A Chromium profile opens on a
+    // blank page and is navigated afterwards; Firefox has no DevTools connection here, so it
+    // still opens on the address itself.
+    this.pendingUrl = startUrl || profile.startUrl || '';
+    this.pendingAppPage = profile.engine === JOE_ENGINE;
 
     if (isFirefox) {
       this.writeFirefoxPrefs(profile, identity.userAgent, proxyArg);
@@ -284,7 +304,6 @@ export class BrowserSession extends EventEmitter {
     profile: Profile,
     userAgent: string,
     proxyArg: string,
-    startUrl?: string,
     extensions: string[] = [],
   ): string[] {
     const fp = profile.fingerprint;
@@ -294,13 +313,22 @@ export class BrowserSession extends EventEmitter {
       '--remote-debugging-address=127.0.0.1',
       '--no-first-run',
       '--no-default-browser-check',
-      '--disable-blink-features=AutomationControlled',
-      '--disable-features=Translate,OptimizationHints,MediaRouter,CalculateNativeWinOcclusion',
+      '--hide-crash-restore-bubble',
+      '--disable-default-apps',
+      // navigator.webdriver is forced false by the document-start fingerprint script, which
+      // runs before any page script on every engine, so no launch flag is needed for it.
+      // --disable-blink-features=AutomationControlled is deliberately NOT passed: Chrome
+      // surfaces that flag as an "unsupported command-line flag" infobar, which is both a
+      // visible glitch and an automation tell no real browser shows.
+      '--disable-features=Translate,OptimizationHints,MediaRouter,CalculateNativeWinOcclusion,DnsOverHttps,InsecureDownloadWarnings,TriggeredPopupDefault,LocalNetworkAccessChecks,LocalNetworkAccessChecksWarn',
       '--disable-component-update',
       '--disable-background-networking',
       '--disable-sync',
       '--metrics-recording-only',
       '--no-service-autorun',
+      '--password-store=basic',
+      '--use-mock-keychain',
+      '--disable-prompt-on-repost',
       `--user-agent=${userAgent}`,
       `--lang=${fp.language}`,
       `--accept-lang=${fp.acceptLanguage}`,
@@ -316,8 +344,11 @@ export class BrowserSession extends EventEmitter {
 
     args.push(...loadArgs(extensions));
 
-    const url = startUrl || profile.startUrl || 'about:blank';
-    args.push(profile.engine === JOE_ENGINE ? `--app=${joeStartPage(url)}` : url);
+    // The browser opens on a blank page and is navigated afterwards, once the fingerprint has
+    // been applied. A start page given on the command line would start loading before the
+    // DevTools connection exists, so its request would carry the real browser's user agent
+    // and client hints while the page went on to claim the profile's identity.
+    args.push(profile.engine === JOE_ENGINE ? '--app=about:blank' : 'about:blank');
     return args;
   }
 
@@ -382,16 +413,21 @@ export class BrowserSession extends EventEmitter {
       this.cdp = connection;
       const autoAttached = new Set<string>();
 
-      // Every document request in this profile is one history entry. Network.requestWillBeSent
-      // fires before the request leaves, so a navigation that is later blocked still appears.
-      this.cdp.on('Network.requestWillBeSent', (params) => {
-        const type = String(params['type'] ?? '');
-        const request = params['request'] as { url?: string } | undefined;
-        if (type === 'Document' && request?.url) {
-          const redirect = params['redirectResponse'] as { url?: string } | undefined;
-          if (redirect?.url) history.markRedirect(this.profileId, redirect.url);
-          history.record(this.profileId, request.url);
-        }
+      // Every document request in this profile is one history entry. The Page domain reports
+      // the start of a navigation and the commit of the document separately, so a redirect
+      // chain is visible without the Network domain being enabled - and that domain is the
+      // clearest DevTools tell a page can read without any cooperation: the browser stops
+      // reusing its network stack and request priorities change.
+      this.cdp.on('Page.frameStartedNavigating', (params) => {
+        const url = String(params['url'] ?? '');
+        if (url) history.recordNavigation(this.profileId, url, 'started');
+      });
+      this.cdp.on('Page.frameNavigated', (params) => {
+        const frame = params['frame'] as { url?: string; type?: string } | undefined;
+        if (!frame?.url) return;
+        // A same-document navigation is a single-page app changing the address it is on.
+        if (frame.type === 'SameDocument') return;
+        history.recordNavigation(this.profileId, frame.url, 'committed');
       });
       this.cdp.on('Page.navigatedWithinDocument', (params) => {
         if (typeof params['url'] === 'string') history.record(this.profileId, params['url']);
@@ -447,6 +483,45 @@ export class BrowserSession extends EventEmitter {
     }
   }
 
+  /**
+   * Make the request headers say what the page says.
+   *
+   * Chromium decides the user agent and the client hints for every request from the real
+   * browser, so a profile that claims to be a Safari on a phone would still send Chromium's
+   * Sec-CH-UA. The override rewrites both the user agent and the client hint metadata from the
+   * same identity the injected script uses, so the wire and the page cannot disagree.
+   */
+  private async applyUserAgentOverride(sessionId: string): Promise<void> {
+    const identity = this.identity;
+    if (!identity || !this.cdp) return;
+    // Safari and Firefox expose no client hints at all, so none are claimed here either.
+    if (!identity.brands.length) {
+      await this.cdp.send('Network.setUserAgentOverride', {
+        userAgent: identity.userAgent,
+        acceptLanguage: this.acceptLanguage,
+        platform: identity.platform,
+      }, sessionId).catch(() => undefined);
+      return;
+    }
+    await this.cdp.send('Network.setUserAgentOverride', {
+      userAgent: identity.userAgent,
+      acceptLanguage: this.acceptLanguage,
+      platform: identity.platform,
+      userAgentMetadata: {
+        brands: identity.brands,
+        fullVersionList: identity.fullVersionList,
+        fullVersion: identity.fullVersionList[identity.fullVersionList.length - 1]?.version ?? '',
+        platform: identity.osPlatform,
+        platformVersion: identity.osVersion,
+        architecture: identity.architecture,
+        bitness: identity.bitness,
+        model: '',
+        wow64: false,
+        mobile: identity.mobile,
+      },
+    }, sessionId).catch(() => undefined);
+  }
+
   private async stampTarget(sessionId: string, type: string, engine: string): Promise<void> {
     if (!this.cdp || !sessionId) return;
     if (this.stamped.has(sessionId)) return;
@@ -457,10 +532,16 @@ export class BrowserSession extends EventEmitter {
     try {
       if (!isWorker) {
         await this.cdp.send('Page.enable', {}, sessionId).catch(() => undefined);
-        // Network is needed for the history capture; a target that refuses it simply has no
-        // history, which is honest and does not stop the stamping below.
-        await this.cdp.send('Network.enable', {}, sessionId).catch(() => undefined);
-        await this.cdp.send('Runtime.enable', {}, sessionId).catch(() => undefined);
+        // Deliberately no Network.enable and no Runtime.enable. Enabling the Network domain is
+        // the clearest DevTools tell a page can read without any cooperation: the browser stops
+        // reusing its network stack and request priorities change. Runtime.enable makes the
+        // renderer report every console call and exception, and on a worker session it waits for
+        // a handshake that never completes. Neither is needed: the user agent override and the
+        // evaluate calls below both work on their own.
+        // The headers must say the same thing as the script. Without this, the request carries
+        // the real Chromium user agent and the real Sec-CH-UA while JavaScript reports the
+        // profile's identity - and a checker that compares the two sees it immediately.
+        await this.applyUserAgentOverride(sessionId);
         // The identifier is deliberately not stored: a live re-apply would need it, but each
         // target is stamped exactly once (see `stamped`), so there is nothing to replace.
         await this.cdp.send(
@@ -474,7 +555,6 @@ export class BrowserSession extends EventEmitter {
            before its first line, so an evaluate here lands before any page script can read
            navigator inside it. The injected source is written against `window`, so the worker
            gets a `self` binding for the two globals it actually needs. */
-        await this.cdp.send('Runtime.enable', {}, sessionId).catch(() => undefined);
         const workerScript =
           'var window = self; var document = undefined; try {\n' + this.injectScript + '\n} catch (e) {}';
         await this.cdp.send('Runtime.evaluate', { expression: workerScript, awaitPromise: false }, sessionId).catch(() => undefined);
@@ -487,7 +567,23 @@ export class BrowserSession extends EventEmitter {
       await this.cdp
         .send('Runtime.runIfWaitingForDebugger', {}, sessionId)
         .catch(() => undefined);
+      // The page is released and stamped, so it can now be sent to its start page.
+      if (type === 'page') await this.navigateToStart(sessionId);
     }
+  }
+
+  /**
+   * Sends the freshly stamped profile to its start page.
+   *
+   * The browser was opened on a blank page so that the fingerprint could be installed before
+   * the first request went out. Navigating here, after the script and the header override are
+   * in place, means the very first request already carries the profile's identity.
+   */
+  private async navigateToStart(sessionId: string): Promise<void> {
+    if (this.navigated || !this.cdp || !this.pendingUrl) return;
+    this.navigated = true;
+    const url = this.pendingAppPage ? joeStartPage(this.pendingUrl) : this.pendingUrl;
+    await this.cdp.send('Page.navigate', { url }, sessionId).catch(() => undefined);
   }
 
   /**

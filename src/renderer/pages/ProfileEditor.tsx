@@ -15,8 +15,11 @@ import {
   FONT_SETS,
   GEO_MODES,
   HUMAN_PASTE_SPEEDS,
+  MANAGED_ENGINES,
   PROXY_TYPES,
   WEBRTC_MODES,
+  enginesFromCatalog,
+  managedEngine,
 } from '../../shared/types';
 import { bridge } from '../bridge';
 import { useI18n } from '../i18n';
@@ -77,6 +80,7 @@ export function ProfileEditor({
   const [tab, setTab] = useState<Tab>('general');
   const [draft, setDraft] = useState<Profile | null>(profile);
   const [kernels, setKernels] = useState<KernelBuild[]>([]);
+  const [catalog, setCatalog] = useState<KernelBuild[]>([]);
   const [proxies, setProxies] = useState<ProxyEntry[]>([]);
   const proxySelection = useRef(0);
   const passwordChanged = useRef(false);
@@ -120,6 +124,10 @@ export function ProfileEditor({
         bridge().listKernels().catch(() => []),
         bridge().listProxies().catch(() => []),
       ]);
+      // The catalog says which engines exist; the installed list says which builds can be pinned.
+      // A profile may choose an engine whose build is not on this machine yet - the launcher
+      // downloads it on the first open - but it may only be pinned to a build that is here.
+      setCatalog(nextKernels);
       setKernels(nextKernels.filter((kernel) => kernel.installed));
       setProxies(nextProxies);
     })();
@@ -156,6 +164,18 @@ export function ProfileEditor({
   }, [draft, isNew]);
 
   const firefoxWarning = draft?.engine === 'firefox';
+
+  /* The browser list must always contain the engine the profile already uses. A select whose
+     value matches no option renders blank, so an empty catalog - a machine that has not reached
+     the vendor yet - left the field showing nothing at all, with no way to tell what the profile
+     would open. */
+  const engineOptions = useMemo(() => {
+    const found = enginesFromCatalog(catalog);
+    if (draft?.engine && managedEngine(draft.engine) && !found.includes(draft.engine)) {
+      return [...found, draft.engine].sort();
+    }
+    return found;
+  }, [catalog, draft?.engine]);
 
   const close = useCallback(async () => {
     if (dirty) {
@@ -365,12 +385,12 @@ export function ProfileEditor({
                     }
                   }}
                 >
-                  <option value="chrome">Chrome for Testing (managed)</option>
-                  <option value="brave">Brave (managed)</option>
-                  <option value="joe">Joe Browser (Chrome for Testing runtime)</option>
-                  <option value="edge" disabled>Edge (no managed Windows build)</option>
-                  <option value="firefox" disabled>Firefox (no managed Windows build)</option>
-                  {!['chrome', 'brave', 'joe', 'edge', 'firefox'].includes(draft.engine) && (
+                  {engineOptions.map((engine) => (
+                    <option key={engine} value={engine}>
+                      {t(`br.engine.${engine}`, engine)} (managed)
+                    </option>
+                  ))}
+                  {!MANAGED_ENGINES.includes(draft.engine as (typeof MANAGED_ENGINES)[number]) && (
                     <option value={draft.engine}>{draft.engine} (existing selection)</option>
                   )}
                   {draft.kernelId && !kernels.some((kernel) => kernel.id === draft.kernelId) && (

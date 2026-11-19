@@ -512,7 +512,9 @@ test('the gate requires an account', async () => {
     body.toLowerCase().includes('create an account') || body.toLowerCase().includes('sign in'),
     'the gate offers no way in',
   );
-  assert.equal(container.querySelector('.gate-skip'), null, 'local mode must not be offered');
+  // A boolean, not the element: Node's assertion diff renders a DOM node into a string large
+  // enough to exhaust the heap, so a failure here would look like a crash rather than a failure.
+  assert.ok(container.querySelector('.gate-skip') === null, 'local mode must not be offered');
   assert.deepEqual(problems, [], `AccountGate: ${problems.join(' | ')}`);
 
   // The security panel owns its local identity; with the mock bridge's local account present the
@@ -567,7 +569,7 @@ test('the idle lock draws over the workspace and clears with the local PIN', asy
   };
   try {
     await render(React.createElement(App));
-    assert.equal(container.querySelector('.lock-overlay'), null, 'the lock drew before the idle event');
+    assert.ok(container.querySelector('.lock-overlay') === null, 'the lock drew before the idle event');
     assert.ok(idleListener, 'the shell never subscribed to the idle event');
 
     await act(async () => {
@@ -604,7 +606,7 @@ test('the idle lock draws over the workspace and clears with the local PIN', asy
       await new Promise((resolve) => setTimeout(resolve, 30));
     });
     assert.equal(unlockCalls, 2);
-    assert.equal(container.querySelector('.lock-overlay'), null, 'the lock did not clear on the right PIN');
+    assert.ok(container.querySelector('.lock-overlay') === null, 'the lock did not clear on the right PIN');
     assert.deepEqual(problems, [], `lock: ${problems.join(' | ')}`);
   } finally {
     await teardown();
@@ -738,11 +740,11 @@ test('registration enters an empty workspace and a remembered account survives r
     assert.equal(registered, true, 'sign-up was never called');
     assert.equal(fakeCloud.user?.email, 'new@example.com');
     assert.equal(container.querySelectorAll('.nav-item').length, 8);
-    assert.equal(container.querySelector('.gate'), null);
+    assert.ok(container.querySelector('.gate') === null);
     await teardown();
     await render(React.createElement(App));
     assert.equal(container.querySelectorAll('.nav-item').length, 8);
-    assert.equal(container.querySelector('.gate'), null);
+    assert.ok(container.querySelector('.gate') === null);
     assert.deepEqual(problems, []);
   } finally {
     await teardown();
@@ -991,7 +993,7 @@ test('theme changes immediately, keeps the shell mounted, and saves rapid change
     assert.ok(shell && toggle);
     await act(async () => { toggle.click(); await Promise.resolve(); });
     assert.equal(win.document.documentElement.dataset.theme, 'light');
-    assert.equal(container.querySelector('.shell'), shell);
+    assert.ok(container.querySelector('.shell') === shell);
     assert.deepEqual(calls, ['light']);
     await act(async () => { toggle.click(); await Promise.resolve(); });
     assert.equal(win.document.documentElement.dataset.theme, 'dark');
@@ -1001,7 +1003,7 @@ test('theme changes immediately, keeps the shell mounted, and saves rapid change
     assert.deepEqual(calls, ['light', 'dark']);
     await act(async () => { pending.shift()!(); await Promise.resolve(); await Promise.resolve(); });
     assert.equal(persisted.theme, 'dark');
-    assert.equal(container.querySelector('.shell'), shell);
+    assert.ok(container.querySelector('.shell') === shell);
     assert.equal(win.localStorage.getItem('joe-theme'), 'dark');
     assert.deepEqual(problems, []);
   } finally { mockBridge.getSettings = originalGet; mockBridge.saveSettings = originalSave; await teardown(); }

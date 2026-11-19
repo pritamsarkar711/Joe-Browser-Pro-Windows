@@ -147,6 +147,66 @@ test('the injected script parses as JavaScript and carries the overrides', () =>
   assert.doesNotMatch(script, /__jbReal/);
 });
 
+test('the font surfaces answer like a real browser', () => {
+  const script = buildFingerprintScript({
+    fingerprint: generateFingerprint({ seed: 4242 }),
+    engine: 'chrome',
+    browserVersion: '157.0.8103.41',
+    tools: {
+      humanPaste: false,
+      humanPasteSpeed: 'natural',
+      proxyWatch: false,
+      proxyWatchInterval: 60,
+      enableRightClick: false,
+      unlockSelection: false,
+      customExtensions: '',
+    },
+    countryCode: 'US',
+  });
+
+  // A real Chromium keeps no system fonts in the set, so the profile must not invent any: a
+  // listed family is a family the browser admits to carrying.
+  assert.doesNotMatch(script, /FontFaceSet/);
+  // The answer has to be the same on every machine, and a real browser always answers true for
+  // a system family.
+  assert.match(script, /document\.fonts\.check = mask\(function check/);
+  // A family the profile does not own measures as the generic fallback, so the host's own fonts
+  // cannot be read out of the profile.
+  assert.match(script, /claimedFonts/);
+  assert.match(script, /parseFont/);
+  assert.match(script, /sans-serif/);
+});
+
+test('the audio surface differs between two profiles of one machine', () => {
+  const render = (seed: number): string => {
+    const script = buildFingerprintScript({
+      fingerprint: generateFingerprint({ seed }),
+      engine: 'chrome',
+      browserVersion: '157.0.8103.41',
+      tools: {
+        humanPaste: false,
+        humanPasteSpeed: 'natural',
+        proxyWatch: false,
+        proxyWatchInterval: 60,
+        enableRightClick: false,
+        unlockSelection: false,
+        customExtensions: '',
+      },
+      countryCode: 'US',
+    });
+    // The scale the samples are multiplied by is the only thing that may differ.
+    const match = /var audioScale = ([^;]+);/.exec(script);
+    assert.ok(match, 'the audio patch has no scale');
+    // The expression reads the seed, so it is evaluated here the way the page would.
+    const scale = new Function('C', `return ${match[1]!};`);
+    return String(scale({ seed }));
+  };
+
+  // Two profiles on one machine have to answer the audio probe differently, or the checker sees
+  // one machine behind both.
+  assert.notEqual(render(11), render(22));
+});
+
 test('the stored brand agrees with the engine and the device target', () => {
   assert.equal(generateFingerprint({ seed: 5, engine: 'brave', os: 'Windows 11' }).brand, 'Brave');
   assert.equal(generateFingerprint({ seed: 5, engine: 'edge', os: 'Windows 11' }).brand, 'Microsoft Edge');
@@ -972,19 +1032,33 @@ test('history retains previous sessions and marks redirects without duplicating 
   const old = { profileId: profile.id, profileName: profile.name, at: '2020-01-01T00:00:00.000Z', url: 'https://previous.test/', title: '', how: 'link', hop: false };
   fs.writeFileSync(path.join(dir, `${profile.id}.jsonl`), JSON.stringify(old) + '\n');
   try {
-    history.record(profile.id, 'https://redirect.test/');
-    history.markRedirect(profile.id, 'https://redirect.test/');
-    history.record(profile.id, 'https://final.test/#fragment');
+    // A redirect chain: the hop is seen first, then the page it landed on.
+    history.recordNavigation(profile.id, 'https://redirect.test/', 'started');
+    history.recordNavigation(profile.id, 'https://final.test/#fragment', 'started');
+    history.recordNavigation(profile.id, 'https://final.test/#fragment', 'committed');
     history.attachTitle(profile.id, 'https://final.test/#fragment', 'Final title');
     const rows = history.list(profile.id);
     assert.equal(rows.length, 3);
     assert.equal(rows[0]!.title, 'Final title');
     assert.equal(rows[0]!.url, 'https://final.test/#fragment');
+    assert.equal(rows[0]!.hop, false);
     assert.equal(rows[1]!.hop, true);
     assert.equal(rows[2]!.url, old.url);
     const disk = fs.readFileSync(path.join(dir, `${profile.id}.jsonl`), 'utf8');
     assert.match(disk, /"hop":true/);
     assert.match(disk, /Final title/);
+  } finally { history.clear(profile.id); store.deleteProfile(profile.id, false); }
+});
+
+test('an ordinary navigation is recorded once and is not a hop', () => {
+  const profile = store.createProfile({ name: 'History single' });
+  try {
+    history.recordNavigation(profile.id, 'https://plain.test/', 'started');
+    history.recordNavigation(profile.id, 'https://plain.test/', 'committed');
+    const rows = history.list(profile.id);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0]!.url, 'https://plain.test/');
+    assert.equal(rows[0]!.hop, false);
   } finally { history.clear(profile.id); store.deleteProfile(profile.id, false); }
 });
 

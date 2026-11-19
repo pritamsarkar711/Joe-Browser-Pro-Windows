@@ -9,7 +9,7 @@ import type {
   SortMode,
   ToolConfig,
 } from '../../shared/types';
-import { DEFAULT_START_PAGE, JOE_ENGINE } from '../../shared/types';
+import { DEFAULT_START_PAGE, FALLBACK_ENGINE, JOE_ENGINE, managedEngine } from '../../shared/types';
 import { Paths } from './paths';
 import { readJson, writeJson, writeJsonDelayed, flushPending } from './atomic';
 import { normalizeProxy, proxyDetail, proxyEnabled, proxyLabel } from './proxy';
@@ -293,10 +293,20 @@ export function restoreProfile(input: Profile): Profile {
   return profile;
 }
 
-/** 'auto' in the settings means the browser this PC already has. */
+/**
+ * The engine a profile will actually launch.
+ *
+ * Only engines with an app-managed build are usable: the launcher never touches a browser
+ * installed on this PC. 'auto' means the default managed engine.
+ */
 function engineFor(input: Partial<Profile>): string {
   const settings = getSettings();
-  return input.engine && input.engine !== 'auto' ? input.engine : settings.defaultEngine === 'auto' ? 'chrome' : settings.defaultEngine;
+  const wanted = input.engine && input.engine !== 'auto'
+    ? input.engine
+    : settings.defaultEngine === 'auto'
+      ? FALLBACK_ENGINE
+      : settings.defaultEngine;
+  return managedEngine(wanted) ? wanted : FALLBACK_ENGINE;
 }
 
 /** The card this PC really has, when the app has learned it. */

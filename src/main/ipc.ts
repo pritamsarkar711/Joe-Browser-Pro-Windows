@@ -10,7 +10,6 @@ import type {
   AppSettings,
   AuditReport,
   CookieSummary,
-  DetectedBrowser,
   ExtensionItem,
   ExtensionReport,
   HistoryEntry,
@@ -34,7 +33,7 @@ import type {
   SystemInfo,
   TrashItem,
 } from '../shared/types';
-import { TELEGRAM_USER } from '../shared/types';
+import { FALLBACK_ENGINE, TELEGRAM_USER, managedEngine } from '../shared/types';
 import {
   allProfiles,
   clearStore,
@@ -61,7 +60,6 @@ import {
 } from './core/store';
 import { rollUnique } from './core/fingerprint';
 import {
-  detectInstalledBrowsers,
   downloadKernel,
   installedKernels,
   listKernels,
@@ -230,7 +228,10 @@ export function registerIpc(context: IpcContext): void {
   const prepareProfile = (input: Partial<Profile>) => {
     const requested = { ...(input ?? {}) };
     const settings = getSettings();
-    if (!requested.engine) requested.engine = settings.defaultEngine === 'auto' ? 'chrome' : settings.defaultEngine;
+    if (!requested.engine) {
+      requested.engine = settings.defaultEngine === 'auto' ? FALLBACK_ENGINE : settings.defaultEngine;
+    }
+    if (!managedEngine(requested.engine)) requested.engine = FALLBACK_ENGINE;
     if (!requested.kernelId) {
       const spread = leastUsedKernel(requested.engine);
       if (spread) requested.kernelId = spread;
@@ -504,7 +505,6 @@ export function registerIpc(context: IpcContext): void {
     await removeKernel(id);
   });
 
-  handle<DetectedBrowser[]>('browsers:detect', () => detectInstalledBrowsers());
 
   /**
    * Learn the graphics card this PC really has.
