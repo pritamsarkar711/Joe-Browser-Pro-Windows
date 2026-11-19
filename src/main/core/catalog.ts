@@ -24,7 +24,7 @@ import { requireSpace } from './disk';
 
 const CFT_KNOWN_GOOD = 'https://googlechromelabs.github.io/chrome-for-testing/known-good-versions-with-downloads.json';
 const CFT_LAST_KNOWN = 'https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json';
-const BRAVE_RELEASES = 'https://api.github.com/repos/brave/brave-browser/releases?per_page=100';
+const BRAVE_RELEASES = 'https://api.github.com/repos/brave/brave-browser/releases?per_page=40';
 const MOZILLA_VERSIONS = 'https://product-details.mozilla.org/1.0/firefox_versions.json';
 
 const CACHE_FILE = () => Paths.storeFile('catalog.json');
@@ -49,7 +49,7 @@ interface CftShape {
   channels?: Record<string, { version: string; downloads?: CftVersionEntry['downloads'] }>;
 }
 
-function httpsJson<T>(url: string, timeoutMs = 12000): Promise<T> {
+function httpsJson<T>(url: string, timeoutMs = 20000): Promise<T> {
   return new Promise((resolve, reject) => {
     // The socket timeout does not cover the name lookup, so a machine with no route to the
     // vendor waits on DNS for as long as the resolver allows. A deadline on the whole request
@@ -290,7 +290,11 @@ export function braveBuildsFromReleases(releases: BraveRelease[]): KernelBuild[]
 
 async function fetchBraveBuilds(): Promise<KernelBuild[]> {
   if (process.platform !== 'win32' || process.arch !== 'x64') return [];
-  const releases = await httpsJson<BraveRelease[]>(BRAVE_RELEASES);
+  // Brave's release list carries every asset of every build, so the answer is megabytes. It is
+  // asked for a shorter window than the other vendors - forty releases cover a stable channel
+  // several times over - and it is given longer to arrive, because a deadline that is too
+  // short loses the whole engine rather than one build.
+  const releases = await httpsJson<BraveRelease[]>(BRAVE_RELEASES, 45000);
   if (!Array.isArray(releases)) throw new Error('Could not read Brave release metadata.');
   return braveBuildsFromReleases(releases);
 }
