@@ -113,25 +113,50 @@ export function record(profileId: string, rawUrl: string, how = 'link', hop = fa
   }
 }
 
-/** A redirect response identifies the preceding request as an intermediate hop. */
-export function markRedirect(profileId: string, rawUrl: string): void {
+/**
+ * One navigation, seen twice.
+ *
+ * The browser reports the start of a navigation and then the commit of the document. An
+ * ordinary navigation reaches here twice with the same address: the first is the hop, the
+ * second is the page the user is actually on, and the second has to win - it is the one in
+ * the address bar. A redirect chain arrives as several starts and one commit, so every
+ * address the chain passed through stays recorded as a hop.
+ */
+export function recordNavigation(profileId: string, rawUrl: string, phase: 'started' | 'committed'): void {
   if (!enabled()) return;
   const url = normaliseUrl(rawUrl);
-  if (!url) return;
-  const entries = recent.get(profileId);
-  const last = entries?.[entries.length - 1];
-  if (!last || last.url !== url || last.hop) return;
-  last.hop = true;
-  last.how = 'redirect';
+  if (!url || !interesting(url)) return;
+
+  const list = recent.get(profileId);
+  const last = list?.[list.length - 1];
+  if (last && last.url === url) {
+    // The same address twice: the second sighting is the page itself, so it is no longer a hop.
+    if (phase === 'committed' && last.hop) clearHop(profileId, last);
+    return;
+  }
+
+  if (phase === 'started') {
+    record(profileId, url, 'redirect', true);
+    return;
+  }
+  record(profileId, url, 'link', false);
+}
+
+/** Removes the hop flag from the newest entry, which turned out to be the page itself. */
+function clearHop(profileId: string, entry: HistoryEntry): void {
+  entry.hop = false;
+  entry.how = 'link';
   try {
     const file = FILE(profileId);
     const lines = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean);
     if (!lines.length) return;
     const disk = JSON.parse(lines[lines.length - 1]!) as HistoryEntry;
-    if (disk.url !== url || disk.at !== last.at) return;
-    lines[lines.length - 1] = JSON.stringify(last);
+    if (disk.url !== entry.url || disk.at !== entry.at) return;
+    lines[lines.length - 1] = JSON.stringify(entry);
     fs.writeFileSync(file, `${lines.join('\n')}\n`, 'utf8');
-  } catch { /* Do not interrupt browsing on a history write failure. */ }
+  } catch {
+    /* the in-memory copy is still right for this session */
+  }
 }
 
 /**

@@ -169,13 +169,11 @@ export function ExtensionsPage({
             fingerprint surfaces—install only what you need.</p>
           <div className="tiles">
             {(report?.recommended ?? []).map((item) => (
-              <div className="tile" key={item.url} style={{ minHeight: 96 }}>
-                <div className="spread" style={{ alignItems: 'flex-start' }}>
-                  <div className="tile-icon">
-                    {item.icon ? <img src={item.icon} alt="" style={{ width: 32, height: 32, objectFit: 'contain' }} /> : <Icon name="extensions" />}
-                  </div>
+              <div className="store-tile" key={item.url}>
+                <div className="tile-icon">
+                  {item.icon ? <img src={item.icon} alt="" style={{ width: 32, height: 32, objectFit: 'contain' }} /> : <Icon name="extensions" />}
                 </div>
-                <div>
+                <div style={{ minWidth: 0 }}>
                   <div className="tile-title">{item.name}</div>
                   <p className="muted">{item.description}</p>
                 </div>

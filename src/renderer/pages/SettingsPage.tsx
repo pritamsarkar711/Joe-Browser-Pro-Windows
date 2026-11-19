@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import type { AppInfo, AppSettings, KernelBuild, LanguageInfo } from '../../shared/types';
+import { enginesFromCatalog } from '../../shared/types';
 import { bridge } from '../bridge';
 import { useI18n } from '../i18n';
 import { Icon, type IconName } from '../components/Icon';
@@ -41,7 +42,7 @@ export function SettingsPage({ settings, info, saveSettings, refreshProfiles, on
   const sections: { id: SettingsSection; label: string; icon: IconName }[] = [
     { id: 'appearance', label: t('set.appearance'), icon: 'sun' },
     { id: 'general', label: t('set.general'), icon: 'settings' },
-    { id: 'account', label: 'Account & security', icon: 'lock' },
+    { id: 'account', label: t('set.accountSection'), icon: 'lock' },
     { id: 'data', label: t('set.data'), icon: 'archive' },
   ];
 
@@ -92,9 +93,8 @@ export function SettingsPage({ settings, info, saveSettings, refreshProfiles, on
             <div className="panel settings-panel">
               <div className="form-grid">
                 <Field label={t('set.browser')}><select className="select" value={settings.defaultEngine} onChange={event => void save({ defaultEngine: event.target.value })}>
-                  <option value="auto">{t('ed.engine.system')}</option>
-                  {['joe', 'chrome', 'chromium', 'brave', 'firefox'].map(engine => <option key={engine} value={engine}>{t(`br.engine.${engine}`, engine)}</option>)}
-                  <option value="edge" disabled>{t('br.engine.edge')}</option>
+                  <option value="auto">{t('br.engine.auto')}</option>
+                  {enginesFromCatalog(kernels).map(engine => <option key={engine} value={engine}>{t(`br.engine.${engine}`, engine)}</option>)}
                 </select></Field>
                 <Field label={t('set.kernel')}><select className="select" value={settings.defaultKernelId} onChange={event => void save({ defaultKernelId: event.target.value })}>
                   <option value="">{t('set.kernel.spread')}</option>

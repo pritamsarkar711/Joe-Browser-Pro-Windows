@@ -59,7 +59,6 @@ const bridge = {
   listKernels: () => invoke('kernels:list'),
   downloadKernel: (id: string) => invoke('kernels:download', id),
   removeKernel: (id: string) => invoke('kernels:remove', id),
-  detectInstalledBrowsers: () => invoke('browsers:detect'),
   learnMachineGpu: () => invoke('browsers:gpu'),
 
   /* ---------------------------------------------------------------- proxies */

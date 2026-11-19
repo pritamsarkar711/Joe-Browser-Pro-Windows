@@ -123,7 +123,7 @@ export interface Profile {
   updatedAt: string;
   lastOpenedAt: string;
   openCount: number;
-  /** Engine key, e.g. chromium | chrome | brave | edge | firefox | custom */
+  /** Engine key. One of the managed engines: joe | chrome | chromium | brave | firefox. */
   engine: string;
   /** A custom executable, used when engine is 'custom'. */
   browserPath: string;
@@ -201,13 +201,6 @@ export interface InstalledKernel {
   exePath: string;
   runtimeVersion?: string;
   installedAt: string;
-}
-
-export interface DetectedBrowser {
-  engine: string;
-  name: string;
-  version: string;
-  path: string;
 }
 
 export type LaunchState = 'starting' | 'running' | 'closing' | 'stopped' | 'failed';
@@ -604,7 +597,6 @@ export interface Bridge {
   listKernels(): Promise<KernelBuild[]>;
   downloadKernel(id: string): Promise<InstalledKernel>;
   removeKernel(id: string): Promise<void>;
-  detectInstalledBrowsers(): Promise<DetectedBrowser[]>;
   /** Launch a throwaway profile to read the graphics card this PC really has. */
   learnMachineGpu(): Promise<{ vendor: string; renderer: string }>;
 
@@ -779,6 +771,33 @@ export const FONT_SETS = [
 ] as const;
 /** Joe Browser is an app-owned engine built on app-managed Chromium builds. */
 export const JOE_ENGINE = 'joe';
+/**
+ * Engines the app knows how to manage.
+ *
+ * A profile can only run one of these: the app never launches a browser installed on the host,
+ * so a locally installed Chrome or Edge is not a usable engine. Which of these can actually be
+ * downloaded depends on the platform - Firefox only publishes a portable archive on Linux -
+ * so the catalog decides what the user is offered.
+ */
+export const MANAGED_ENGINES = ['joe', 'chrome', 'chromium', 'brave', 'firefox'] as const;
+/** The engine used when nothing else is pinned and no managed build matches. */
+export const FALLBACK_ENGINE = 'chrome';
+export function managedEngine(engine: string): boolean {
+  return (MANAGED_ENGINES as readonly string[]).includes(engine);
+}
+/**
+ * The engines this machine can actually run, taken from the build catalog.
+ *
+ * A fixed list would offer an engine that cannot be downloaded here. The catalog already knows
+ * the platform, so it decides.
+ */
+export function enginesFromCatalog(kernels: { engine: string }[]): string[] {
+  const found = new Set<string>();
+  for (const kernel of kernels) {
+    if (managedEngine(kernel.engine)) found.add(kernel.engine);
+  }
+  return [...found].sort();
+}
 export const THE_FINGERPRINT_TEST_URL = 'https://browsercan.net';
 /** The page a new profile opens on. Kept separate from the fingerprint test target. */
 export const DEFAULT_START_PAGE = 'https://browsercan.net?utm_source=chatgpt.com';

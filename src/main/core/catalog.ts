@@ -2,9 +2,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import https from 'node:https';
+import type { ClientRequest } from 'node:http';
 import crypto from 'node:crypto';
 import { execFile } from 'node:child_process';
-import type { DetectedBrowser, InstalledKernel, KernelBuild } from '../../shared/types';
+import type { InstalledKernel, KernelBuild } from '../../shared/types';
 import { Paths } from './paths';
 import { readJson, writeJson } from './atomic';
 import { requireSpace } from './disk';
@@ -40,7 +41,7 @@ interface CacheShape {
 
 interface CftVersionEntry {
   version: string;
-  downloads?: { chrome?: { platform: string; url: string }[]; chromium?: { platform: string; url: string }[] };
+  downloads?: { chrome?: { platform: string; url: string; sha256?: string }[]; chromium?: { platform: string; url: string; sha256?: string }[] };
 }
 
 interface CftShape {
@@ -48,20 +49,31 @@ interface CftShape {
   channels?: Record<string, { version: string; downloads?: CftVersionEntry['downloads'] }>;
 }
 
-function httpsJson<T>(url: string, timeoutMs = 20000): Promise<T> {
+function httpsJson<T>(url: string, timeoutMs = 12000): Promise<T> {
   return new Promise((resolve, reject) => {
-    const request = https.get(
+    // The socket timeout does not cover the name lookup, so a machine with no route to the
+    // vendor waits on DNS for as long as the resolver allows. A deadline on the whole request
+    // is what actually bounds the wait.
+    let request: ClientRequest;
+    const deadline = setTimeout(() => {
+      request.destroy(new Error(`${url} timed out`));
+    }, timeoutMs);
+    const finish = () => clearTimeout(deadline);
+
+    request = https.get(
       url,
       { headers: { 'user-agent': 'JoeBrowser/2.0 (+desktop)' }, timeout: timeoutMs },
       (response) => {
         if (response.statusCode && response.statusCode >= 400) {
           response.resume();
+          finish();
           reject(new Error(`${url} answered ${response.statusCode}`));
           return;
         }
         const chunks: Buffer[] = [];
         response.on('data', (chunk: Buffer) => chunks.push(chunk));
         response.on('end', () => {
+          finish();
           try {
             resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')) as T);
           } catch (error) {
@@ -71,7 +83,10 @@ function httpsJson<T>(url: string, timeoutMs = 20000): Promise<T> {
       },
     );
     request.on('timeout', () => request.destroy(new Error(`${url} timed out`)));
-    request.on('error', reject);
+    request.on('error', (error) => {
+      finish();
+      reject(error);
+    });
   });
 }
 
@@ -88,6 +103,14 @@ function pickUrl(entries: { platform: string; url: string }[] | undefined): stri
   return entries?.find((e) => e.platform === suffix)?.url ?? '';
 }
 
+/** The vendor's hash for this platform's archive, when the catalog publishes one. */
+function pickSha256(entries: { platform: string; url: string; sha256?: string }[] | undefined): string {
+  const suffix = platformSuffix();
+  const entry = entries?.find((e) => e.platform === suffix);
+  const hash = entry?.sha256 ?? '';
+  return /^[a-f0-9]{64}$/i.test(hash) ? hash.toLowerCase() : '';
+}
+
 function channelOf(version: string, channels: Record<string, string>): string {
   for (const [name, value] of Object.entries(channels)) {
     if (value === version) return name;
@@ -99,9 +122,17 @@ async function fetchChromiumBuilds(): Promise<KernelBuild[]> {
   const suffix = platformSuffix();
   const builds: KernelBuild[] = [];
 
+  // Both Chrome for Testing documents are read at once. Asked in sequence, a machine with no
+  // route to Google waits for one timeout before it even starts the second request, and the
+  // Browsers page sits empty for twice as long as it needs to.
+  const [lastResult, knownResult] = await Promise.allSettled([
+    httpsJson<CftShape>(CFT_LAST_KNOWN),
+    httpsJson<CftShape>(CFT_KNOWN_GOOD),
+  ]);
+
   let channels: Record<string, string> = {};
-  try {
-    const last = await httpsJson<CftShape>(CFT_LAST_KNOWN);
+  if (lastResult.status === 'fulfilled') {
+    const last = lastResult.value;
     for (const [name, info] of Object.entries(last.channels ?? {})) {
       channels[name] = info.version;
     }
@@ -117,17 +148,16 @@ async function fetchChromiumBuilds(): Promise<KernelBuild[]> {
           version: info.version,
           os: suffix,
           downloadUrl: url,
+          sha256: pickSha256(info.downloads?.[product]),
           installed: false,
           path: '',
           sizeBytes: 0,
         });
       }
     }
-  } catch {
-    /* known-good versions below remain available without channel claims */
   }
 
-  const known = await httpsJson<CftShape>(CFT_KNOWN_GOOD);
+  const known = knownResult.status === 'fulfilled' ? knownResult.value : { versions: [] };
   const knownGood = (known.versions ?? []).filter((entry) => entry.downloads?.chrome || entry.downloads?.chromium);
 
   // Keep the newest build of each major, newest first, so the page is eight rows rather than
@@ -159,6 +189,7 @@ async function fetchChromiumBuilds(): Promise<KernelBuild[]> {
         version: entry.version,
         os: suffix,
         downloadUrl: url,
+        sha256: pickSha256(entry.downloads?.[product]),
         installed: false,
         path: '',
         sizeBytes: 0,
@@ -304,10 +335,51 @@ export function installedKernels(): InstalledKernel[] {
   return [...installedIndex().values()];
 }
 
+/**
+ * One catalog refresh, shared by everyone who asks for it.
+ *
+ * The Browsers page, a new profile and a batch of profiles all need the same vendor lists. Left
+ * alone, each of them opens its own connection to three vendors, and a machine with no route to
+ * them waits for the timeout three times over.
+ */
+let catalogRefresh: Promise<KernelBuild[]> | null = null;
+
+async function gatherCatalog(cached: KernelBuild[], installedCount: number): Promise<KernelBuild[]> {
+  if (catalogRefresh) return catalogRefresh;
+  catalogRefresh = (async () => {
+    const gathered: KernelBuild[] = [];
+    const results = await Promise.allSettled([fetchChromiumBuilds(), fetchFirefoxBuilds(), fetchBraveBuilds()]);
+    const sourceEngines = [['chrome', 'chromium'], ['firefox'], ['brave']];
+    results.forEach((result, index) => {
+      if (result.status === 'fulfilled') gathered.push(...result.value);
+      else gathered.push(...cached.filter((build) => sourceEngines[index]?.includes(build.engine)));
+    });
+
+    let builds = cached;
+    if (gathered.length > 0) {
+      builds = gathered;
+    }
+    // Joe Browser is derived from the Chromium catalog, not fetched from it as a fourth vendor.
+    const withoutJoe = builds.filter((build) => build.engine !== 'joe');
+    builds = [...withoutJoe, ...joeBuildsFromChromium(withoutJoe)];
+    if (gathered.length > 0) {
+      writeJson(CACHE_FILE(), { schemaVersion: 4, fetchedAt: Date.now(), builds } satisfies CacheShape);
+    } else if (builds.length === 0 && installedCount === 0) {
+      throw new Error(
+        'The browser catalog could not be reached. Check the connection and try again - ' +
+          'existing installations still work.',
+      );
+    }
+    return builds;
+  })().finally(() => {
+    catalogRefresh = null;
+  });
+  return catalogRefresh;
+}
+
 export async function listKernels(forceRefresh = false): Promise<KernelBuild[]> {
   const cache = readJson<CacheShape>(CACHE_FILE(), { fetchedAt: 0, builds: [] });
   const fresh = cache.schemaVersion === 4 && Date.now() - cache.fetchedAt < CACHE_TTL_MS;
-
   // Discard legacy entries with a fabricated archive URL, including old cached results.
   let builds = cache.builds.filter((build) =>
     (build.engine !== 'firefox' || (process.platform === 'linux' && build.channel !== 'dev')) &&
@@ -318,28 +390,7 @@ export async function listKernels(forceRefresh = false): Promise<KernelBuild[]> 
   const installed = installedIndex();
 
   if (!fresh || forceRefresh || builds.length === 0) {
-    const gathered: KernelBuild[] = [];
-    const results = await Promise.allSettled([fetchChromiumBuilds(), fetchFirefoxBuilds(), fetchBraveBuilds()]);
-    const sourceEngines = [['chrome', 'chromium'], ['firefox'], ['brave']];
-    results.forEach((result, index) => {
-      if (result.status === 'fulfilled') gathered.push(...result.value);
-      else gathered.push(...builds.filter((build) => sourceEngines[index]?.includes(build.engine)));
-    });
-
-    if (gathered.length > 0) {
-      builds = gathered;
-    }
-    // Joe Browser is derived from the Chromium catalog, not fetched from it as a fourth vendor.
-    const withoutJoe = builds.filter((build) => build.engine !== 'joe');
-    builds = [...withoutJoe, ...joeBuildsFromChromium(withoutJoe)];
-    if (gathered.length > 0) {
-      writeJson(CACHE_FILE(), { schemaVersion: 4, fetchedAt: Date.now(), builds } satisfies CacheShape);
-    } else if (builds.length === 0 && installed.size === 0) {
-      throw new Error(
-        'The browser catalog could not be reached. Check the connection and try again - ' +
-          'existing installations still work.',
-      );
-    }
+    builds = await gatherCatalog(builds, installed.size);
   }
 
   // Previously installed versions remain selectable and removable after vendor catalogs rotate.
@@ -567,82 +618,3 @@ export function resolveKernelExe(id: string): string | null {
   return locateLauncher(dir, meta.engine);
 }
 
-/** Browsers already on this PC, so a profile can use one as it is. */
-export async function detectInstalledBrowsers(): Promise<DetectedBrowser[]> {
-  const candidates: { engine: string; name: string; paths: string[] }[] = [];
-
-  if (process.platform === 'win32') {
-    const programFiles = [process.env['PROGRAMFILES'], process.env['PROGRAMFILES(X86)'], process.env['LOCALAPPDATA']]
-      .filter((p): p is string => Boolean(p));
-
-    const expand = (base: string, rest: string) => path.join(base, ...rest.split('\\'));
-
-    candidates.push(
-      { engine: 'chrome', name: 'Google Chrome', paths: programFiles.map((p) => expand(p, 'Google\\Chrome\\Application\\chrome.exe')) },
-      { engine: 'edge', name: 'Microsoft Edge', paths: programFiles.map((p) => expand(p, 'Microsoft\\Edge\\Application\\msedge.exe')) },
-      { engine: 'brave', name: 'Brave', paths: programFiles.map((p) => expand(p, 'BraveSoftware\\Brave-Browser\\Application\\brave.exe')) },
-      { engine: 'firefox', name: 'Firefox', paths: programFiles.map((p) => expand(p, 'Mozilla Firefox\\firefox.exe')) },
-      { engine: 'chromium', name: 'Chromium', paths: programFiles.map((p) => expand(p, 'Chromium\\Application\\chrome.exe')) },
-    );
-  } else if (process.platform === 'darwin') {
-    candidates.push(
-      { engine: 'chrome', name: 'Google Chrome', paths: ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'] },
-      { engine: 'edge', name: 'Microsoft Edge', paths: ['/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge'] },
-      { engine: 'brave', name: 'Brave', paths: ['/Applications/Brave Browser.app/Contents/MacOS/Brave Browser'] },
-      { engine: 'firefox', name: 'Firefox', paths: ['/Applications/Firefox.app/Contents/MacOS/firefox'] },
-      { engine: 'chromium', name: 'Chromium', paths: ['/Applications/Chromium.app/Contents/MacOS/Chromium'] },
-    );
-  } else {
-    candidates.push(
-      { engine: 'chrome', name: 'Google Chrome', paths: ['/usr/bin/google-chrome', '/usr/bin/google-chrome-stable'] },
-      { engine: 'chromium', name: 'Chromium', paths: ['/usr/bin/chromium', '/usr/bin/chromium-browser', '/snap/bin/chromium'] },
-      { engine: 'firefox', name: 'Firefox', paths: ['/usr/bin/firefox'] },
-      { engine: 'brave', name: 'Brave', paths: ['/usr/bin/brave-browser'] },
-      { engine: 'edge', name: 'Microsoft Edge', paths: ['/usr/bin/microsoft-edge'] },
-    );
-  }
-
-  const found: DetectedBrowser[] = [];
-  for (const candidate of candidates) {
-    const hit = candidate.paths.find((p) => p && fs.existsSync(p));
-    if (!hit) continue;
-    found.push({
-      engine: candidate.engine,
-      name: candidate.name,
-      version: await versionOf(hit),
-      path: hit,
-    });
-  }
-  return found;
-}
-
-function versionOf(exe: string): Promise<string> {
-  return new Promise((resolve) => {
-    if (process.platform !== 'win32') {
-      execFile(exe, ['--version'], { timeout: 4000, windowsHide: true }, (error, stdout) => {
-        if (error) {
-          resolve('unknown');
-          return;
-        }
-        const match = /(\d+\.\d+(?:\.\d+)?)/.exec(stdout);
-        resolve(match ? match[1]! : 'unknown');
-      });
-      return;
-    }
-
-    const escaped = exe.replace(/'/g, "''");
-    execFile(
-      'powershell.exe',
-      ['-NoProfile', '-Command', `(Get-Item -LiteralPath '${escaped}').VersionInfo.ProductVersion`],
-      { timeout: 6000, windowsHide: true },
-      (error, stdout) => {
-        if (error) {
-          resolve('unknown');
-          return;
-        }
-        const trimmed = stdout.trim();
-        resolve(trimmed || 'unknown');
-      },
-    );
-  });
-}

@@ -283,9 +283,10 @@ export interface UniquenessResult {
 }
 
 /**
- * Compare a candidate against every existing profile. `strict` requires a full twelve-surface
- * separation; the relaxed pass only refuses a shared WebGL renderer plus a shared screen, which
- * is the pair a checker treats as one machine.
+ * Compare a candidate against every existing profile. `strict` requires a near-total separation
+ * across the twelve surfaces. The relaxed pass refuses only the pairs a checker treats as one
+ * machine - the same canvas with the same graphics card, or the same canvas on the same screen -
+ * because a shared core count or a shared time zone is not a duplicate device.
  */
 export function checkUniqueness(
   candidate: FingerprintConfig,
@@ -299,13 +300,17 @@ export function checkUniqueness(
   for (const other of existing) {
     const theirs = signature(other);
     let shared = 0;
+    const sharedSurfaces = new Set<Surface>();
     for (const surface of SURFACES) {
       if (mine[surface] === theirs[surface]) {
         collisions[surface] = (collisions[surface] ?? 0) + 1;
         shared++;
+        sharedSurfaces.add(surface);
       }
     }
-    const fatal = strict ? shared >= SURFACES.length - 2 : shared >= 10;
+    const fatal = strict
+      ? shared >= SURFACES.length - 2
+      : (sharedSurfaces.has('canvas') && (sharedSurfaces.has('webgl') || sharedSurfaces.has('screen')));
     if (fatal) collided = true;
   }
 

@@ -13,7 +13,6 @@ import type {
   ProxyBatchRow,
   Bridge,
   CookieSummary,
-  DetectedBrowser,
   ExtensionItem,
   ExtensionReport,
   HistoryEntry,
@@ -830,13 +829,6 @@ export const mockBridge: Bridge = {
     await delay(120);
   },
 
-  async detectInstalledBrowsers(): Promise<DetectedBrowser[]> {
-    return [
-      { engine: 'chrome', name: 'Google Chrome', version: '130.0.6723.91', path: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe' },
-      { engine: 'edge', name: 'Microsoft Edge', version: '130.0.2849.68', path: 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe' },
-      { engine: 'firefox', name: 'Firefox', version: '132.0.1', path: 'C:\\Program Files\\Mozilla Firefox\\firefox.exe' },
-    ];
-  },
 
   async learnMachineGpu() {
     await delay(700);

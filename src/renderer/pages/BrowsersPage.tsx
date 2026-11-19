@@ -1,11 +1,28 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
-import type { AppSettings, DetectedBrowser, KernelBuild, SystemInfo } from '../../shared/types';
+import type { AppSettings, KernelBuild, SystemInfo } from '../../shared/types';
+import { enginesFromCatalog } from '../../shared/types';
 import { bridge, onEvent } from '../bridge';
 import { useI18n } from '../i18n';
 import { Icon } from '../components/Icon';
 import { BrowserLogo } from '../components/BrowserLogo';
-import { Button, Chip, EmptyState, Field, Stat, Toggle, useConfirm, useToast } from '../components/UI';
+import { Banner, Button, Chip, EmptyState, Field, Stat, Toggle, useConfirm, useToast } from '../components/UI';
 import { messageOf } from '../util';
+
+/**
+ * Orders two version strings.
+ *
+ * The versions come from different vendors and are written differently - `1.2.3.4`, `132.0.6834`,
+ * `1.2.3` - so the parts are compared as numbers and a missing part counts as zero.
+ */
+function compareVersions(left: string, right: string): number {
+  const a = left.split(/[.\-]/).map((part) => Number.parseInt(part, 10) || 0);
+  const b = right.split(/[.\-]/).map((part) => Number.parseInt(part, 10) || 0);
+  for (let i = 0; i < Math.max(a.length, b.length); i += 1) {
+    const diff = (a[i] ?? 0) - (b[i] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
 
 /**
  * Browsers and builds.
@@ -28,7 +45,6 @@ export function BrowsersPage({
   const toast = useToast();
   const confirm = useConfirm();
 
-  const [browsers, setBrowsers] = useState<DetectedBrowser[]>([]);
   const [kernels, setKernels] = useState<KernelBuild[]>([]);
   const [system, setSystem] = useState<SystemInfo | null>(null);
   const [progress, setProgress] = useState<Record<string, number>>({});
@@ -38,12 +54,10 @@ export function BrowsersPage({
 
   const load = useCallback(async () => {
     try {
-      const [nextBrowsers, nextKernels, nextSystem] = await Promise.all([
-        bridge().detectInstalledBrowsers().catch(() => []),
+      const [nextKernels, nextSystem] = await Promise.all([
         bridge().listKernels(),
         bridge().getSystemInfo(),
       ]);
-      setBrowsers(nextBrowsers);
       setKernels(nextKernels);
       setSystem(nextSystem);
     } catch (error) {
@@ -67,12 +81,12 @@ export function BrowsersPage({
     [],
   );
 
-  const download = async (kernel: KernelBuild) => {
+  const download = async (kernel: KernelBuild, isUpdate = false) => {
     setBusy(kernel.id);
     setProgress((current) => ({ ...current, [kernel.id]: 0 }));
     try {
       await bridge().downloadKernel(kernel.id);
-      toast.success(t('br.installed'), `${kernel.engine} ${kernel.version}`);
+      toast.success(isUpdate ? t('br.update') : t('br.installed'), `${kernel.engine} ${kernel.version}`);
       await load();
     } catch (error) {
       toast.error(t('br.download'), messageOf(error));
@@ -119,9 +133,21 @@ export function BrowsersPage({
   };
 
   const installed = kernels.filter((kernel) => kernel.installed);
-  // Detection is informational: a system browser can only become the default once an
-  // app-managed build of the same engine is installed, because that is what profiles launch.
-  const installedEngines = new Set(installed.map((kernel) => kernel.engine));
+
+  /* A newer build of an engine that is already here is an update, and the update is offered on
+     the build itself: the download list holds every version of every engine, so the one that
+     matters for an installed engine is not obvious. */
+  const updates = new Map<string, KernelBuild>();
+  for (const kernel of installed) {
+    const newer = kernels.find(
+      (candidate) =>
+        !candidate.installed &&
+        candidate.engine === kernel.engine &&
+        candidate.channel === kernel.channel &&
+        compareVersions(candidate.version, kernel.version) > 0,
+    );
+    if (newer) updates.set(kernel.id, newer);
+  }
 
   return (
     <>
@@ -131,61 +157,27 @@ export function BrowsersPage({
         </div>
         <div className="header-actions">
           <Button variant="soft" icon="refresh" onClick={() => void load()}>
-            {t('btn.detect')}
+            {t('btn.refresh')}
           </Button>
         </div>
       </header>
 
       <div className="content">
         <div className="content-inner browsers-content">
-          <div className="section-label">{t('br.detected')}</div>
-          {browsers.length === 0 && !loading ? (
-            <EmptyState
-              icon="browsers"
-              title={t('br.none')}
-              body=""
-              action={
-                <Button variant="primary" icon="refresh" onClick={() => void load()}>
-                  {t('btn.detect')}
-                </Button>
-              }
-            />
-          ) : (
-            <div className="rows">
-              {browsers.map((browser) => (
-                <div className="row" key={browser.path}>
-                  <div className="row-icon" style={{ background: 'var(--accent-soft)', color: 'var(--accent-hi)' }}>
-                    <BrowserLogo engine={browser.engine} />
-                  </div>
-                  <div className="row-main">
-                    <div className="row-title">
-                      {browser.name}
-                      <Chip tone="ok">{t('br.version').replace('{v}', browser.version)}</Chip>
-                      {settings.defaultEngine === browser.engine ? <Chip tone="accent">{t('set.browser')}</Chip> : null}
-                    </div>
-                    <div className="row-sub mono">{browser.path}</div>
-                  </div>
-                  <div className="row-actions">
-                    {installedEngines.has(browser.engine) ? (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        icon="check"
-                        onClick={() => void saveSettings({ defaultEngine: browser.engine })}
-                        title={t('set.browser')}
-                      >
-                        {t('set.browser')}
-                      </Button>
-                    ) : null}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
+          <Banner tone="info" icon="browsers">
+            {t('br.managed.hint')}
+          </Banner>
 
           <div className="section-label">{t('br.kernels')}</div>
-          {installed.length === 0 ? (
-            <EmptyState icon="download" title={t('br.kernel.empty')} body="" />
+          {loading ? (
+            <div className="row">
+              <span className="spinner" style={{ width: 16, height: 16 }} />
+              <div className="row-main">
+                <div className="row-sub">{t('br.kernel.loading')}</div>
+              </div>
+            </div>
+          ) : installed.length === 0 ? (
+            <EmptyState icon="download" title={t('br.kernel.empty')} body={t('br.kernel.empty.body')} />
           ) : (
             <div className="rows">
               {installed.map((kernel) => (
@@ -202,6 +194,17 @@ export function BrowsersPage({
                     <div className="row-sub mono">{kernel.path || kernel.os}</div>
                   </div>
                   <div className="row-actions">
+                    {updates.has(kernel.id) ? (
+                      <Button
+                        size="sm"
+                        variant="primary"
+                        icon="refresh"
+                        busy={busy === updates.get(kernel.id)!.id}
+                        onClick={() => void download(updates.get(kernel.id)!, true)}
+                      >
+                        {t('br.update')}
+                      </Button>
+                    ) : null}
                     <Button size="sm" variant="ghost" icon="trash" onClick={() => void remove(kernel)} busy={busy === kernel.id}>
                       {t('br.remove')}
                     </Button>
@@ -289,7 +292,7 @@ export function BrowsersPage({
             </div>
           </div>
 
-          <div className="section-label">{t('set.browser')}</div>
+          <div className="section-label">{t('br.engine.default')}</div>
           <div className="panel">
             <Field label={t('set.browser')}>
               <select
@@ -297,15 +300,12 @@ export function BrowsersPage({
                 value={settings.defaultEngine}
                 onChange={(event) => void saveSettings({ defaultEngine: event.target.value })}
               >
-                <option value="auto">{t('ed.engine.system')}</option>
-                {['joe', 'chrome', 'chromium', 'brave', 'firefox'].map((engine) => (
+                <option value="auto">{t('br.engine.auto')}</option>
+                {enginesFromCatalog(kernels).map((engine) => (
                   <option key={engine} value={engine}>
                     {t(`br.engine.${engine}`, engine)}
                   </option>
                 ))}
-                {/* Edge is detected but has no app-managed build, so it can be seen and left,
-                    not newly chosen for a profile that then cannot launch. */}
-                <option value="edge" disabled>{t('br.engine.edge')}</option>
               </select>
             </Field>
             <div className="divider" />
