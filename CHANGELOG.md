@@ -1,5 +1,53 @@
 # Changelog
 
+## 2.5.0
+
+- Show the window. The packaged application created its window and never put it on the screen:
+  `ready-to-show` alone is not a promise that it will arrive. The window is now revealed on the
+  first of several signals, with a deadline in case none of them comes, and it is centred on the
+  work area of the display it opens on.
+- Make the window usable on a phone. Its minimum size is now the narrowest screen worth
+  supporting - 360 by 400 points - instead of a desktop size, so a phone-sized window can be
+  opened at all.
+- Keep the two builds out of each other's files. Windows treats `Settings.json` and
+  `settings.json` as one name, so this application was overwriting the older C++ build's
+  settings on every launch and breaking it. The store files are now named `AppSettings.json`,
+  `AppAccounts.json`, `AppExtensions.json` and `AppProxies.json`, and a file is moved to its
+  new name only when its contents prove it belongs to this application.
+- Rebuild the Settings page as cards of rows: the name of a setting on the left, the control on
+  the right, with the theme and density chosen from segmented controls and a save button that
+  appears only when something has changed.
+- Add a storage card to Settings with the data folder, a cache clean, a workspace reset and the
+  log folder, each behind the confirmation it deserves.
+- Give the Browsers page engine tabs and channel tabs built from the catalogue, so a tab for
+  an engine that has nothing to download is no longer a dead end, and mark an installed build
+  with its channel when it is not stable.
+- Give the Tools page colour-coded tiles for batch creation, import, export, proxy testing,
+  network checks, cookies and extensions.
+- Make every page work on a narrow window: the header's actions wrap instead of running off the
+  edge, a button's label gives way before the button does, the breadcrumb disappears when there
+  is no room for it, and the trial badge keeps only the plan.
+- Add the live inspection and responsive sweep scripts used to check all eight pages at six
+  window sizes.
+
+## 2.4.0
+
+- Run only application-managed browsers. The detection of browsers installed on this computer is
+  gone from the main process, the bridge, the shared types and the Browsers page, so a profile
+  can no longer point at a browser on the PC and the launcher still refuses any executable
+  outside the managed kernel tree.
+- Make the wire and the page say the same thing. The user agent override is applied before the
+  first request, and the DevTools Network and Runtime domains are no longer enabled on the page
+  session, because both are readable from a page.
+- Report the fonts and the audio honestly. A family the profile does not own measures as the
+  generic fallback, and the rendered audio is scaled per profile, so two profiles of one
+  machine do not answer the audio probe identically.
+- Centre the window on the work area and re-centre it when a display is added, removed or
+  resized, so it never opens in a corner of a screen that is gone.
+- Keep the Brave release catalogue within reach by asking for forty releases rather than a
+  hundred, and wait for the launcher's own navigation in the smoke test instead of starting a
+  second one.
+
 ## 2.3.0
 
 - Add Joe Browser as its own selectable engine: a branded app-window browser built on the same
