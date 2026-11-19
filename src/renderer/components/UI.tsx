@@ -145,7 +145,7 @@ export function Button({
   return (
     <button className={classes} onClick={onClick} disabled={disabled || busy} title={title} type={type}>
       {busy ? <span className="spinner" /> : icon ? <Icon name={icon} /> : null}
-      {children}
+      <span className="btn-label">{children}</span>
     </button>
   );
 }

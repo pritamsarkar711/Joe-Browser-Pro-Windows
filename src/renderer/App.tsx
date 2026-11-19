@@ -384,6 +384,7 @@ function Rail({
   const subscription = useSubscription();
   const isAdmin = subscription.entitlement?.isAdmin === true;
   const email = subscription.user?.email ?? '';
+  const group = NAV.find((entry) => entry.id === page)?.group ?? 'system';
 
   const item = (entry: NavEntry) => (
     <button
@@ -414,9 +415,9 @@ function Rail({
       </div>
 
       <div className="rail-scroll">
-        <div className="nav-group">{t('nav.workspace')}</div>
+        <div className={`nav-group${group === 'workspace' ? ' active' : ''}`}>{t('nav.workspace')}</div>
         {NAV.filter((entry) => entry.group === 'workspace').map(item)}
-        <div className="nav-group">{t('nav.system')}</div>
+        <div className={`nav-group${group === 'system' ? ' active' : ''}`}>{t('nav.system')}</div>
         {NAV.filter((entry) => entry.group === 'system').map(item)}
         {isAdmin ? item(ADMIN_NAV) : null}
       </div>
@@ -484,7 +485,7 @@ function TitleBar({
         type="button"
         className={`tier-chip${tier === 'premium' ? ' premium' : tier === 'trial' ? ' trial' : ''}`}
         onClick={onOpenSettings}
-        title="Subscription details"
+        title={tier === 'trial' ? `Trial · ${days}d left — subscription details` : 'Subscription details'}
         style={{ marginRight: 12 }}
       >
         {tier === 'premium'
@@ -492,7 +493,9 @@ function TitleBar({
               ? 'Admin'
               : 'Premium'
             : tier === 'trial'
-              ? `Trial · ${days}d left`
+              ? <>
+                  Trial<span className="tier-detail"> · {days}d left</span>
+                </>
               : 'Free plan'}
       </button>
       <ThemeToggle theme={theme} onChange={(next) => { void onTheme(next).catch((error: unknown) => toast.error(t('err.save'), messageOf(error))); }} />

@@ -382,7 +382,7 @@ test('a registered account round-trips through the store', () => {
 test('the account file never contains the password or its hash in the clear', () => {
   // The store is encrypted as a whole, so the test is that the plaintext is not reachable by
   // reading the file - which is the actual threat: someone opening it in Notepad.
-  const file = path.join(scratch, 'accounts.json');
+  const file = path.join(scratch, 'AppAccounts.json');
   assert.ok(fs.existsSync(file), 'the account store was not written');
 
   const raw = fs.readFileSync(file, 'utf8');
@@ -490,7 +490,7 @@ test('a corrupt account store is preserved rather than overwritten', () => {
   accounts.reloadAccounts();
   accounts.register('second@example.com', 'another password', 'Second');
 
-  const file = path.join(scratch, 'accounts.json');
+  const file = path.join(scratch, 'AppAccounts.json');
   fs.writeFileSync(file, '{"format":"joe-accounts","ciphertext":"not-a-ciphertext"}', 'utf8');
 
   accounts.reloadAccounts();
@@ -499,7 +499,7 @@ test('a corrupt account store is preserved rather than overwritten', () => {
   assert.throws(() => accounts.register('third@example.com', 'yet another', 'Third'), /not being overwritten/);
 
   // The damaged file is still on disk, and a copy was taken beside it.
-  const siblings = fs.readdirSync(scratch).filter((name) => name.startsWith('accounts.json'));
+  const siblings = fs.readdirSync(scratch).filter((name) => name.startsWith('AppAccounts.json'));
   assert.ok(siblings.length >= 2, `expected a backup beside the store, found ${siblings.join(', ')}`);
 
   // Start clean for anything after this test.

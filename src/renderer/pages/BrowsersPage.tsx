@@ -9,6 +9,14 @@ import { Banner, Button, Chip, EmptyState, Field, Stat, Toggle, useConfirm, useT
 import { messageOf } from '../util';
 
 /**
+ * The channel tabs, in the order they are offered.
+ *
+ * A channel is a publisher's release line - stable, beta, dev, canary, esr - and the catalogue
+ * knows which of them exist for a given engine.
+ */
+const CHANNEL_ORDER = ['stable', 'beta', 'dev', 'canary', 'esr'];
+
+/**
  * Orders two version strings.
  *
  * The versions come from different vendors and are written differently - `1.2.3.4`, `132.0.6834`,
@@ -51,6 +59,8 @@ export function BrowsersPage({
   const [busy, setBusy] = useState('');
   const [learning, setLearning] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [engine, setEngine] = useState('chrome');
+  const [channel, setChannel] = useState('all');
 
   const load = useCallback(async () => {
     try {
@@ -134,6 +144,23 @@ export function BrowsersPage({
 
   const installed = kernels.filter((kernel) => kernel.installed);
 
+  /* The catalogue decides which engines exist, so the tabs are built from it: a tab for an
+     engine with nothing to download is a dead end. */
+  const engines = enginesFromCatalog(kernels);
+  const activeEngine = engines.includes(engine) ? engine : (engines[0] ?? 'chrome');
+  /* The publishers write the channel name differently - Chrome for Testing says "Stable",
+     Mozilla says "stable" - so the comparison is on the lowercased name. */
+  const channels = CHANNEL_ORDER.filter((name) =>
+    kernels.some((kernel) => kernel.engine === activeEngine && kernel.channel.toLowerCase() === name),
+  );
+  const matchesChannel = (kernel: KernelBuild): boolean =>
+    channel === 'all' || kernel.channel.toLowerCase() === channel;
+
+  const engineInstalled = installed.filter((kernel) => kernel.engine === activeEngine);
+  const engineAvailable = kernels.filter(
+    (kernel) => kernel.engine === activeEngine && !kernel.installed && matchesChannel(kernel),
+  );
+
   /* A newer build of an engine that is already here is an update, and the update is offered on
      the build itself: the download list holds every version of every engine, so the one that
      matters for an installed engine is not obvious. */
@@ -143,7 +170,7 @@ export function BrowsersPage({
       (candidate) =>
         !candidate.installed &&
         candidate.engine === kernel.engine &&
-        candidate.channel === kernel.channel &&
+        candidate.channel.toLowerCase() === kernel.channel.toLowerCase() &&
         compareVersions(candidate.version, kernel.version) > 0,
     );
     if (newer) updates.set(kernel.id, newer);
@@ -154,8 +181,12 @@ export function BrowsersPage({
       <header className="header">
         <div className="header-titles">
           <h1>{t('br.title')}</h1>
+          <div className="sub">{t('sub.browsers')}</div>
         </div>
         <div className="header-actions">
+          <Button variant="soft" icon="folder" onClick={() => void bridge().openKernelsDir()}>
+            {t('br.folder')}
+          </Button>
           <Button variant="soft" icon="refresh" onClick={() => void load()}>
             {t('btn.refresh')}
           </Button>
@@ -168,6 +199,48 @@ export function BrowsersPage({
             {t('br.managed.hint')}
           </Banner>
 
+          <div className="tabs" role="tablist" aria-label={t('br.tab.engines')}>
+            {engines.map((name) => (
+              <button
+                key={name}
+                type="button"
+                role="tab"
+                className="tab"
+                aria-selected={name === activeEngine}
+                onClick={() => {
+                  setEngine(name);
+                  setChannel('all');
+                }}
+              >
+                {t(`br.engine.${name}`, name)}
+              </button>
+            ))}
+          </div>
+
+          <div className="tabs channels" role="tablist" aria-label={t('br.tab.channels')}>
+            <button
+              type="button"
+              role="tab"
+              className="tab channel"
+              aria-selected={channel === 'all'}
+              onClick={() => setChannel('all')}
+            >
+              {t('br.tab.all')}
+            </button>
+            {channels.map((name) => (
+              <button
+                key={name}
+                type="button"
+                role="tab"
+                className="tab channel"
+                aria-selected={channel === name}
+                onClick={() => setChannel(name)}
+              >
+                {t(`br.channel.${name}`, name)}
+              </button>
+            ))}
+          </div>
+
           <div className="section-label">{t('br.kernels')}</div>
           {loading ? (
             <div className="row">
@@ -176,11 +249,11 @@ export function BrowsersPage({
                 <div className="row-sub">{t('br.kernel.loading')}</div>
               </div>
             </div>
-          ) : installed.length === 0 ? (
+          ) : engineInstalled.length === 0 ? (
             <EmptyState icon="download" title={t('br.kernel.empty')} body={t('br.kernel.empty.body')} />
           ) : (
             <div className="rows">
-              {installed.map((kernel) => (
+              {engineInstalled.map((kernel) => (
                 <div className="row" key={kernel.id}>
                   <div className="row-icon" style={{ background: 'var(--ok-soft)', color: 'var(--ok)' }}>
                     <BrowserLogo engine={kernel.engine} />
@@ -189,7 +262,9 @@ export function BrowsersPage({
                     <div className="row-title">
                       {t(`br.engine.${kernel.engine}`, kernel.engine)} {kernel.version}
                       <Chip tone="ok">{t('br.installed')}</Chip>
-                      {kernel.channel && kernel.channel !== 'stable' ? <Chip tone="warn">{kernel.channel}</Chip> : null}
+                      {kernel.channel && kernel.channel.toLowerCase() !== 'stable' ? (
+                        <Chip tone="warn">{kernel.channel}</Chip>
+                      ) : null}
                     </div>
                     <div className="row-sub mono">{kernel.path || kernel.os}</div>
                   </div>
@@ -214,12 +289,11 @@ export function BrowsersPage({
             </div>
           )}
 
-          {kernels.filter((kernel) => !kernel.installed).length > 0 ? (
+          {engineAvailable.length > 0 ? (
             <>
               <div className="section-label">{t('br.download')}</div>
               <div className="rows">
-                {kernels
-                  .filter((kernel) => !kernel.installed)
+                {engineAvailable
                   .slice(0, 30)
                   .map((kernel) => (
                     <div className="row" key={kernel.id}>

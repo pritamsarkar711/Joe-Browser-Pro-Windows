@@ -17,7 +17,7 @@ import { ensureHumanPasteExtension } from './humanPaste';
  * The included tools are local implementations, not the publishers' original extensions.
  */
 
-const LIBRARY_FILE = () => Paths.storeFile('extensions.json');
+const LIBRARY_FILE = () => Paths.storeFile('AppExtensions.json');
 const IMPORTED_ROOT = () => path.join(Paths.extensions, 'imported');
 const SHIPPED_ROOT = () => path.join(Paths.extensions, 'shipped');
 

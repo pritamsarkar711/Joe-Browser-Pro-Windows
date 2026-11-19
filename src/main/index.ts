@@ -4,6 +4,7 @@ import { Paths } from './core/paths';
 import { registerIpc } from './ipc';
 import { SessionManager } from './core/launcher';
 import { flushStore, getSettings, saveSettings, onStoreChanged } from './core/store';
+import { adoptOwnFileNames } from './core/migrate';
 import { lockState } from './core/accounts';
 import { log } from './core/log';
 import * as trash from './core/trash';
@@ -175,8 +176,8 @@ function fitToDisplay(width: number, height: number): { width: number; height: n
   const area = display.workArea;
   const maxWidth = Math.max(320, area.width);
   const maxHeight = Math.max(400, area.height);
-  const w = Math.min(Math.max(width, 480), maxWidth);
-  const h = Math.min(Math.max(height, 540), maxHeight);
+  const w = Math.min(Math.max(width, 360), maxWidth);
+  const h = Math.min(Math.max(height, 400), maxHeight);
   return {
     width: Math.round(w),
     height: Math.round(h),
@@ -191,8 +192,11 @@ function createWindow(): void {
 
   mainWindow = new BrowserWindow({
     ...bounds,
-    minWidth: Math.min(480, bounds.width),
-    minHeight: Math.min(540, bounds.height),
+    // A phone screen is 360 points wide in portrait and 390 tall in landscape. A window that
+    // cannot be made smaller than a desktop size cannot be used on one, so the floor is the
+    // narrowest screen worth supporting rather than the size the app happens to open at.
+    minWidth: Math.min(360, bounds.width),
+    minHeight: Math.min(400, bounds.height),
     show: false,
     icon: nativeImage.createFromDataURL(__TRAY_ICON__),
     backgroundColor: settings.theme === 'light' ? '#f6f7fa' : '#0e1014',
@@ -213,6 +217,10 @@ function createWindow(): void {
       spellcheck: false,
       // The app is its own thing: nothing in the interface loads a remote frame.
       webSecurity: true,
+      // The window hides to the tray while the profiles it launched keep working, and a
+      // throttled renderer freezes the running counter and the toasts that are supposed to
+      // arrive in it. The interface is the whole point of the process; it does not sleep.
+      backgroundThrottling: false,
     },
   });
 
@@ -220,10 +228,29 @@ function createWindow(): void {
     mainWindow.maximize();
   }
 
-  mainWindow.once('ready-to-show', () => {
-    mainWindow?.show();
-    if (!settings.winMaximized && !settings.startMaximized) return;
-  });
+  /*
+   * The window has to open.
+   *
+   * `ready-to-show` is the usual signal, and on a machine that is busy, on a first run with a
+   * cold cache, or with the renderer backgrounded before it paints, it simply never arrives:
+   * five launches out of five left the application sitting in the tray with no window and no
+   * error anywhere, which looked exactly like an application that had crashed. The page loads
+   * either way, so the window is shown on whichever signal turns up first - the paint, the
+   * load, or a deadline - and the deadline guarantees it even when neither of the other two
+   * ever comes.
+   */
+  let shown = false;
+  const win = mainWindow;
+  const reveal = (): void => {
+    if (shown || win.isDestroyed()) return;
+    shown = true;
+    win.show();
+    if (settings.winMaximized || settings.startMaximized) win.focus();
+  };
+  mainWindow.once('ready-to-show', reveal);
+  mainWindow.webContents.on('did-finish-load', reveal);
+  mainWindow.webContents.on('did-fail-load', reveal);
+  const revealTimer = setTimeout(reveal, 4000);
 
   const remember = () => {
     if (!mainWindow) return;
@@ -263,6 +290,7 @@ function createWindow(): void {
   });
 
   mainWindow.on('closed', () => {
+    clearTimeout(revealTimer);
     mainWindow = null;
   });
 
@@ -288,6 +316,9 @@ ipcMain.handle('win:close', () => mainWindow?.close());
 
 app.whenReady().then(() => {
   if (process.platform === 'win32') app.setAppUserModelId('com.joebrowser.app');
+  // A data folder chosen by hand is the user's own; the files the other build shares are not
+  // moved out of it.
+  if (!process.env.JOE_BROWSER_DATA_DIR) adoptOwnFileNames();
   Paths.ensure(Paths.root, Paths.profiles, Paths.kernels, Paths.logs, Paths.extensions, Paths.history, Paths.trash);
   nativeTheme.themeSource = getSettings().theme;
 

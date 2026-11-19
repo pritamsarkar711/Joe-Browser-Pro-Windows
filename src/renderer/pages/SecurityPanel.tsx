@@ -593,7 +593,7 @@ function LocalAccountSetup({ onDone }: { onDone: () => void }): ReactNode {
 
       <div className="cluster" style={{ marginTop: 4 }}>
         <Button variant="primary" icon="lock" busy={busy} disabled={!email.includes('@') || password.length < 6} onClick={() => void submit()}>
-          {mode === 'create' ? 'Create local identity & turn on app lock' : 'Sign in to app lock'}
+          {mode === 'create' ? 'Create local identity' : 'Sign in to app lock'}
         </Button>
       </div>
     </div>

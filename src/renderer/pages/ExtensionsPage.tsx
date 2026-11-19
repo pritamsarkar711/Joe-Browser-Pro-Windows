@@ -68,6 +68,7 @@ export function ExtensionsPage({
       <header className="header">
         <div className="header-titles">
           <h1>{t('ext.title')}</h1>
+          <div className="sub">{t('sub.extensions')}</div>
         </div>
         <div className="header-actions">
           <Button variant="soft" icon="link" onClick={() => setStoreDialog(true)}>{t('ext.byUrl')}</Button>

@@ -31,7 +31,7 @@ import { log } from './log';
 
 const STORE_VERSION = 3;
 const PROFILES_FILE = () => Paths.storeFile('Profiles.json');
-const SETTINGS_FILE = () => Paths.storeFile('Settings.json');
+const SETTINGS_FILE = () => Paths.storeFile('AppSettings.json');
 
 interface StoreShape {
   version: number;

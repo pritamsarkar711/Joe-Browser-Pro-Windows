@@ -946,7 +946,7 @@ test('a German proxy profile shows the German flag, not the British one', async 
   await teardown();
 });
 
-test('settings navigation keeps essential controls and never displays language percentages', async () => {
+test('settings shows every group at once and never displays language percentages', async () => {
   signIn(); reset();
   const settings = await mockBridge.getSettings();
   const info = await mockBridge.getAppInfo();
@@ -954,19 +954,46 @@ test('settings navigation keeps essential controls and never displays language p
   assert.ok(container.querySelector('.lang-grid'));
   assert.equal(container.querySelectorAll('.lang .cov').length, 0);
   assert.ok([...container.querySelectorAll('.lang')].every(el => !/\d+%/.test(el.textContent ?? '')));
-  const go = async (label: string) => {
-    const item = [...container.querySelectorAll('.settings-nav-item')].find(el => el.textContent?.includes(label)) as HTMLButtonElement;
-    assert.ok(item, label);
-    await act(async () => { item.click(); });
-  };
-  await go('General');
+  /* The page is one scroll of grouped cards, so every group is on screen without a click. */
+  for (const group of ['Browser engine', 'Workspace', 'Profile tools', 'Account & security', 'Storage']) {
+    assert.ok(text().includes(group), group);
+  }
   assert.ok(container.querySelector('select'));
-  await go('Account & security');
   assert.ok(text().includes('Subscription'));
-  await go('Data & storage');
   assert.ok(text().includes('Reset'));
-  await go('Appearance');
   assert.equal(container.querySelectorAll('.lang .country-flag').length, (await mockBridge.listLanguages()).length);
+  assert.deepEqual(problems, []);
+  await teardown();
+});
+
+test('settings keeps a typed value until the changes are saved', async () => {
+  signIn(); reset();
+  const settings = await mockBridge.getSettings();
+  const info = await mockBridge.getAppInfo();
+  const saved: Array<Partial<typeof settings>> = [];
+  await render(hosted(React.createElement(SettingsPage, {
+    settings,
+    info,
+    saveSettings: async (patch: Partial<typeof settings>) => {
+      saved.push(patch);
+      return { ...settings, ...patch };
+    },
+    refreshProfiles: async () => undefined,
+    onSignedOut: () => undefined,
+  })));
+  const input = [...container.querySelectorAll('input')].find((el) => (el as HTMLInputElement).value === settings.startPage) as HTMLInputElement;
+  assert.ok(input, 'the start page field is missing');
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(win.HTMLInputElement.prototype, 'value')!.set!.call(input, 'https://example.com/');
+    input.dispatchEvent(new win.Event('input', { bubbles: true }));
+    await Promise.resolve();
+  });
+  assert.equal(saved.length, 0, 'a half-typed value must not be written');
+  const save = [...container.querySelectorAll('button')].find((el) => el.textContent?.includes('Save changes')) as HTMLButtonElement;
+  assert.ok(save, 'the save button is missing');
+  await act(async () => { save.dispatchEvent(new win.MouseEvent('click', { bubbles: true })); await Promise.resolve(); });
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0]!.startPage, 'https://example.com/');
   assert.deepEqual(problems, []);
   await teardown();
 });

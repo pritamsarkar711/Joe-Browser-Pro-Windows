@@ -59,7 +59,7 @@ export class AccountFailure extends Error {
 
 /* ------------------------------------------------------------------ storage */
 
-const accountsFile = () => Paths.storeFile('accounts.json');
+const accountsFile = () => Paths.storeFile('AppAccounts.json');
 const sessionFile = () => Paths.storeFile('session.json');
 
 let unreadable = false;

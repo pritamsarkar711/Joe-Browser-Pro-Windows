@@ -41,6 +41,15 @@ import { ActivateDialog } from '../components/ActivateDialog';
  * "clear the cache" is a decision with a size attached.
  */
 
+/**
+ * The chip colours, in the order the tiles use them.
+ *
+ * The original gave every tool a colour from a fixed palette and cycled through it. The tiles
+ * are recognisable by their colour before their name is read, which is the whole point of a
+ * coloured chip.
+ */
+const TINTS = ['#4c8dff', '#14b8a6', '#8b5cf6', '#f59e0b', '#ec4899', '#22c55e', '#06b6d4', '#6366f1', '#64748b'] as const;
+
 export function ToolsPage({
   profiles,
   refreshProfiles,
@@ -95,24 +104,32 @@ export function ToolsPage({
   const tile = (
     icon: IconName,
     title: string,
-    _description: string,
+    description: string,
+    tint: string,
+    actionLabel: string,
     action: () => void,
     busyKey?: string,
-    tone?: 'accent' | 'warn' | 'err' | 'ok',
   ) => (
-    <button className="tile" onClick={action} type="button" disabled={Boolean(busyKey && busy === busyKey)}>
-      <div className="tile-icon" style={tone ? { background: `var(--${tone}-soft)`, color: `var(--${tone})` } : undefined}>
+    <div className="tile">
+      <div
+        className="tile-icon"
+        style={{ background: `color-mix(in srgb, ${tint} 26%, var(--panel))`, color: tint }}
+      >
         {busyKey && busy === busyKey ? <span className="spinner" /> : <Icon name={icon} />}
       </div>
-      <div>
-        <div className="tile-title">{title}</div>
-      </div>
+      <div className="tile-title">{title}</div>
+      <div className="tile-desc">{description}</div>
       <div className="tile-foot">
-        <span className="faint" style={{ fontSize: 11.5 }}>
-          <Icon name="chevronRight" size={12} />
-        </span>
+        <button
+          className="tile-action"
+          type="button"
+          onClick={action}
+          disabled={Boolean(busyKey && busy === busyKey)}
+        >
+          {actionLabel}
+        </button>
       </div>
-    </button>
+    </div>
   );
 
   const runAudit = async () => {
@@ -156,6 +173,7 @@ export function ToolsPage({
       <header className="header">
         <div className="header-titles">
           <h1>{t('tools.title')}</h1>
+          <div className="sub">{t('sub.tools')}</div>
         </div>
         <div className="header-actions">
           <Button variant="soft" icon="folder" onClick={() => void bridge().openDataDir()}>
@@ -173,8 +191,8 @@ export function ToolsPage({
       <div className="content">
         <div className="content-inner tools-content">
           <div className="tiles">
-            {tile('layers', t('tools.batch'), t('tools.batch.hint'), () => subscription.tier === 'free' ? setActivateOpen(true) : setBatching(true))}
-            {tile('download', t('tools.import'), t('tools.import.hint'), async () => {
+            {tile('layers', t('tools.batch'), t('tools.batch.hint'), TINTS[0], t('btn.batch'), () => subscription.tier === 'free' ? setActivateOpen(true) : setBatching(true))}
+            {tile('download', t('tools.import'), t('tools.import.hint'), TINTS[1], t('btn.import'), async () => {
               setBusy('import');
               try {
                 const count = await bridge().importProfiles(remaining);
@@ -186,7 +204,7 @@ export function ToolsPage({
                 setBusy('');
               }
             }, 'import')}
-            {tile('save', t('tools.export'), t('tools.export.hint'), async () => {
+            {tile('save', t('tools.export'), t('tools.export.hint'), TINTS[2], t('btn.export'), async () => {
               setBusy('export');
               try {
                 const file = await bridge().exportProfiles();
@@ -197,17 +215,17 @@ export function ToolsPage({
                 setBusy('');
               }
             }, 'export')}
-            {tile('proxy', t('tools.proxy'), t('tools.proxy.hint'), () => onNavigate('proxies'))}
-            {tile('wifi', t('tools.net'), t('tools.net.hint'), () => onNavigate('proxies'))}
-            {tile('cookie', t('tools.cookies'), t('tools.cookies.hint'), () => setCookiesOpen(true))}
-            {tile('extensions', t('tools.ext'), t('tools.ext.hint'), () => onNavigate('extensions'))}
-            {tile('trash', t('tools.trash'), t('tools.trash.hint'), () => {
+            {tile('proxy', t('tools.proxy'), t('tools.proxy.hint'), TINTS[3], t('btn.testall'), () => onNavigate('proxies'))}
+            {tile('wifi', t('tools.net'), t('tools.net.hint'), TINTS[4], t('btn.check'), () => onNavigate('proxies'))}
+            {tile('cookie', t('tools.cookies'), t('tools.cookies.hint'), TINTS[5], t('btn.open'), () => setCookiesOpen(true))}
+            {tile('extensions', t('tools.ext'), t('tools.ext.hint'), TINTS[6], t('btn.open'), () => onNavigate('extensions'))}
+            {tile('trash', t('tools.trash'), t('tools.trash.hint'), TINTS[7], t('btn.restore'), () => {
               document.getElementById('joe-trash')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
             })}
-            {tile('archive', t('tools.clean'), t('tools.clean.hint'), cleanCaches, 'clean')}
-            {tile('layers', t('tools.audit'), t('tools.audit.hint'), runAudit, 'audit')}
-            {tile('cpu', t('tools.gpu'), t('tools.gpu.hint'), () => onNavigate('browsers'))}
-            {tile('terminal', t('tools.logs'), t('tools.logs.hint'), () => void bridge().openLogsDir())}
+            {tile('archive', t('tools.clean'), t('tools.clean.hint'), TINTS[8], t('btn.clean'), cleanCaches, 'clean')}
+            {tile('layers', t('tools.audit'), t('tools.audit.hint'), TINTS[0], t('btn.audit'), runAudit, 'audit')}
+            {tile('cpu', t('tools.gpu'), t('tools.gpu.hint'), TINTS[1], t('btn.view'), () => onNavigate('browsers'))}
+            {tile('terminal', t('tools.logs'), t('tools.logs.hint'), TINTS[2], t('btn.open'), () => void bridge().openLogsDir())}
           </div>
 
           <div className="section-label">{t('tools.storage')}</div>

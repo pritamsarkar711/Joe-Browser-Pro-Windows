@@ -25,7 +25,7 @@ import { normalizeProxy, openTunnel, parseProxyLine, proxyEnabled, testProxy, up
  * Secrets go through the same DPAPI path as a profile's password, for the same reason.
  */
 
-const FILE = () => Paths.storeFile('proxies.json');
+const FILE = () => Paths.storeFile('AppProxies.json');
 
 export interface StoredEntry extends ProxyEntry {
   /** The ciphertext; the plaintext is only ever put on the wire, never in the file. */

@@ -11,7 +11,7 @@ export function AboutPage({ info }: { info: AppInfo | null; profiles?: ProfileSu
   return (
     <>
       <header className="header">
-        <div className="header-titles"><h1>{t('header.about')}</h1></div>
+        <div className="header-titles"><h1>{t('header.about')}</h1><div className="sub">{t('sub.about')}</div></div>
       </header>
       <div className="content">
         <div className="content-inner">
