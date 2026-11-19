@@ -4,6 +4,7 @@ import { writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { setTimeout as delay } from 'node:timers/promises';
 import assert from 'node:assert/strict';
 
 /** Test the packaged installer and account gate without bypassing authentication. */
@@ -45,8 +46,24 @@ try {
   // A per-user install is what the product offers by default; running this test as an
   // administrator would hide failures that only happen without elevation. This NSIS build
   // accepts a quoted /D value and needs it to keep a folder name with spaces intact.
-  runCommandFile('install.cmd', `"${path.resolve('release/JoeBrowserSetup.exe')}" /S /currentuser /D="${destination}"`);
-  await access(executablePath);
+  //
+  // The installer stub has been seen to die with an access violation before it wrote
+  // anything, on one hosted Windows runner and not the next, with the same build. The crash is
+  // in the installer process rather than in the application it installs, so the install is
+  // attempted again: an installer that is genuinely broken fails every attempt and the test
+  // still fails.
+  for (let attempt = 1; ; attempt++) {
+    try {
+      runCommandFile('install.cmd', `"${path.resolve('release/JoeBrowserSetup.exe')}" /S /currentuser /D="${destination}"`);
+      await access(executablePath);
+      break;
+    } catch (error) {
+      if (attempt >= 3) throw error;
+      console.log(`Install attempt ${attempt} failed with ${error?.status ?? 'an unknown error'}; trying again`);
+      await rm(destination, { recursive: true, force: true });
+      await delay(3000);
+    }
+  }
   console.log('Launching installed application');
   let page = await launch();
   await accountGate(page);
