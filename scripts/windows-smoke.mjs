@@ -120,7 +120,7 @@ try {
     await page.locator('.lang').first().waitFor();
     const layout = await page.evaluate(() => {
       const items = [...document.querySelectorAll('.lang')].map(el => el.getBoundingClientRect());
-      const content = document.querySelector('.settings-content').getBoundingClientRect();
+      const content = document.querySelector('.settings-groups').getBoundingClientRect();
       const overlap = items.some((a, i) => items.slice(i + 1).some(b => a.left < b.right - 1 && a.right > b.left + 1 && a.top < b.bottom - 1 && a.bottom > b.top + 1));
       return { overlap, fits: content.left >= 0 && content.right <= window.innerWidth + 1, percentages: [...document.querySelectorAll('.lang')].some(el => /\d+%/.test(el.textContent)) };
     });
